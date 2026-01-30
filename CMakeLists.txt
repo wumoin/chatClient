@@ -25,6 +25,15 @@ file(GLOB_RECURSE CHATCLIENT_SOURCES
 )
 add_executable(chatClient ${CHATCLIENT_SOURCES})
 
+# 头文件搜索路径：包含 src 及其所有子目录，便于直接 include 头文件。
+set(CHATCLIENT_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/src")
+foreach(source_file IN LISTS CHATCLIENT_SOURCES)
+    get_filename_component(source_dir "${source_file}" DIRECTORY)
+    list(APPEND CHATCLIENT_INCLUDE_DIRS "${source_dir}")
+endforeach()
+list(REMOVE_DUPLICATES CHATCLIENT_INCLUDE_DIRS)
+target_include_directories(chatClient PRIVATE ${CHATCLIENT_INCLUDE_DIRS})
+
 # 链接 Qt Widgets 模块。
 target_link_libraries(chatClient PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
 
