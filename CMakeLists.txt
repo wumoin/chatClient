@@ -2,24 +2,25 @@ cmake_minimum_required(VERSION 3.16)
 
 project(chatClient LANGUAGES CXX)
 
-# C++ 标准设置。
+# C++ 标准设置
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 生成 compile_commands.json，供 clangd 等工具使用。
+# 生成 compile_commands.json，供 clangd 等工具使用
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 开启 Qt 的自动 MOC/UIC/RCC 处理。
+# 开启 Qt 的自动 MOC/UIC/RCC 处理
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# 同时支持 Qt6 与 Qt5。
+# 同时支持 Qt6 与 Qt5
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
-# ASIO（header-only）依赖：默认使用内置下载，必要时可切到系统库。
+# ASIO（header-only）依赖：默认使用内置下载，必要时可切到系统库
 option(CHATCLIENT_USE_SYSTEM_ASIO "Use system installed Asio" OFF)
+
 if (CHATCLIENT_USE_SYSTEM_ASIO)
     find_package(Asio REQUIRED)
     add_library(chatclient_asio INTERFACE)
@@ -38,19 +39,23 @@ else()
         GIT_TAG asio-1-28-0
     )
     FetchContent_MakeAvailable(asio)
+
     add_library(chatclient_asio INTERFACE)
-    target_include_directories(chatclient_asio INTERFACE "${asio_SOURCE_DIR}/asio/include")
+    target_include_directories(chatclient_asio INTERFACE
+        "${asio_SOURCE_DIR}/asio/include"
+    )
     target_compile_definitions(chatclient_asio INTERFACE ASIO_STANDALONE)
 endif()
 
-# 应用目标（收集 src 目录下所有文件）。
+# 应用目标（收集 src 目录下所有文件）
 file(GLOB_RECURSE CHATCLIENT_SOURCES
     CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*"
 )
+
 add_executable(chatClient ${CHATCLIENT_SOURCES})
 
-# 头文件搜索路径：包含 src 及其所有子目录，便于直接 include 头文件。
+# 头文件搜索路径：包含 src 及其所有子目录，便于直接 include 头文件
 set(CHATCLIENT_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/src")
 foreach(source_file IN LISTS CHATCLIENT_SOURCES)
     get_filename_component(source_dir "${source_file}" DIRECTORY)
@@ -59,12 +64,26 @@ endforeach()
 list(REMOVE_DUPLICATES CHATCLIENT_INCLUDE_DIRS)
 target_include_directories(chatClient PRIVATE ${CHATCLIENT_INCLUDE_DIRS})
 
-# 链接 Qt Widgets 模块。
-target_link_libraries(chatClient PRIVATE Qt${QT_VERSION_MAJOR}::Widgets chatclient_asio)
-
-# Windows 下隐藏控制台窗口（GUI 应用）。
+# Windows 常用宏：避免 min/max 宏污染、减少 Windows.h 头文件污染（可选但推荐）
 if (WIN32)
-    set_target_properties(chatClient PROPERTIES
-        WIN32_EXECUTABLE TRUE
-    )
+    target_compile_definitions(chatClient PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()
+
+# 链接 Qt Widgets + Asio
+target_link_libraries(chatClient PRIVATE
+    Qt${QT_VERSION_MAJOR}::Widgets
+    chatclient_asio
+)
+
+# Windows 下 Asio 需要 Winsock 库（关键：解决 __imp_WSAStartup 等 undefined reference）
+if (WIN32)
+    target_link_libraries(chatClient PRIVATE ws2_32)
+    # 如遇到其它网络相关符号缺失，可再打开下面两个：
+    # target_link_libraries(chatClient PRIVATE mswsock)
+    # target_link_libraries(chatClient PRIVATE wsock32)
+endif()
+
+# Windows 下隐藏控制台窗口（GUI 应用）
+if (WIN32)
+    set_target_properties(chatClient PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
