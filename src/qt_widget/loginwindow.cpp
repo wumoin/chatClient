@@ -3,6 +3,7 @@
 #include <QCheckBox>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QFile>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
@@ -11,6 +12,16 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <asio.hpp>
+
+// 从 Qt 资源读取全局 QSS：统一管理样式，便于集中修改。
+static QString loadGlobalStyle()
+{
+    QFile file(QStringLiteral(":/styles.qss"));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QString();
+    }
+    return QString::fromUtf8(file.readAll());
+}
 
 LoginWindow::LoginWindow(QWidget *parent)
     : QWidget(parent)
@@ -25,6 +36,9 @@ LoginWindow::LoginWindow(QWidget *parent)
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(18, 18, 18, 18);
     rootLayout->setSpacing(12);
+
+    // 应用全局 QSS：统一输入框与勾选框风格，跨平台一致。
+    setStyleSheet(loadGlobalStyle());
 
     // 自定义标题栏：用于窗口拖拽与窗口按钮。
     m_titleBar = createTitleBar();
@@ -72,7 +86,7 @@ void LoginWindow::mousePressEvent(QMouseEvent *event)
     // 只允许在标题栏范围内拖拽窗口。
     if (event->button() == Qt::LeftButton && m_titleBar && m_titleBar->geometry().contains(event->pos())) {
         m_dragging = true;
-        m_dragOffset = event->globalPos() - frameGeometry().topLeft();
+        m_dragOffset = event->globalPosition().toPoint() - frameGeometry().topLeft();
         event->accept();
         return;
     }
@@ -82,7 +96,7 @@ void LoginWindow::mousePressEvent(QMouseEvent *event)
 void LoginWindow::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_dragging && (event->buttons() & Qt::LeftButton)) {
-        move(event->globalPos() - m_dragOffset);
+        move(event->globalPosition().toPoint() - m_dragOffset);
         event->accept();
         return;
     }
@@ -163,13 +177,11 @@ QWidget *LoginWindow::createLoginPage()
     // 账号输入区：标签 + 输入框。
     m_accountEdit = new QLineEdit(card);
     m_accountEdit->setPlaceholderText(QStringLiteral("用户名"));
-    m_accountEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
     // 密码输入区：标签 + 密码框（隐藏输入）。
     m_passwordEdit = new QLineEdit(card);
     m_passwordEdit->setPlaceholderText(QStringLiteral("请输入密码"));
     m_passwordEdit->setEchoMode(QLineEdit::Password);
-    m_passwordEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
     // 选项区：记住我 / 自动登录。
     auto *optionsLayout = new QHBoxLayout();
@@ -179,6 +191,7 @@ QWidget *LoginWindow::createLoginPage()
     optionsLayout->addWidget(m_rememberCheck);
     optionsLayout->addWidget(m_autoLoginCheck);
     optionsLayout->addStretch(1);
+
 
     // 主操作按钮：登录。
     m_loginButton = new QPushButton(QStringLiteral("登录"), card);
@@ -225,20 +238,17 @@ QWidget *LoginWindow::createRegisterPage()
     // 注册账号输入区。
     m_registerAccountEdit = new QLineEdit(card);
     m_registerAccountEdit->setPlaceholderText(QStringLiteral("用户名"));
-    m_registerAccountEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
 
     // 密码输入区。
     m_registerPasswordEdit = new QLineEdit(card);
     m_registerPasswordEdit->setPlaceholderText(QStringLiteral("设置登录密码"));
     m_registerPasswordEdit->setEchoMode(QLineEdit::Password);
-    m_registerPasswordEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
     // 确认密码输入区。
     m_registerConfirmEdit = new QLineEdit(card);
     m_registerConfirmEdit->setPlaceholderText(QStringLiteral("再次输入密码"));
     m_registerConfirmEdit->setEchoMode(QLineEdit::Password);
-    m_registerConfirmEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
     // 注册提交按钮：用于提交注册信息（逻辑待接入）。
     m_registerSubmitButton = new QPushButton(QStringLiteral("注册"), card);
