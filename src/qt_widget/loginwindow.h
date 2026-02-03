@@ -8,6 +8,8 @@ class QLineEdit;
 class QPushButton;
 class QStackedWidget;
 class QWidget;
+class QMouseEvent;
+class QPaintEvent;
 
 // 登录窗口：使用 QWidget 作为顶层容器，负责组织登录界面的控件与布局。
 class LoginWindow : public QWidget
@@ -19,6 +21,16 @@ public:
     explicit LoginWindow(QWidget *parent = nullptr);
 
 private:
+    // 绘制自定义窗口边框与圆角背景。
+    void paintEvent(QPaintEvent *event) override;
+    // 处理窗口拖拽移动。
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+
+    // 初始化自定义标题栏（拖拽区 + 窗口按钮）。
+    QWidget *createTitleBar();
+
     // 登录页切换到注册页。
     void showRegisterPage();
     // 注册页切换回登录页。
@@ -34,6 +46,8 @@ private:
     QLabel *m_subtitleLabel = nullptr;
     // 页面容器：在登录页与注册页之间切换。
     QStackedWidget *m_stack = nullptr;
+    // 顶部标题栏（用于拖拽与放置窗口按钮）。
+    QWidget *m_titleBar = nullptr;
 
     // 账号输入框：支持手机号/邮箱/用户名等文本。
     QLineEdit *m_accountEdit = nullptr;
@@ -58,4 +72,8 @@ private:
     QPushButton *m_registerSubmitButton = nullptr;
     // 注册页返回按钮：回到登录页。
     QPushButton *m_backToLoginButton = nullptr;
+
+    // 拖拽状态与偏移。
+    bool m_dragging = false;
+    QPoint m_dragOffset;
 };

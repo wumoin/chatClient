@@ -5,21 +5,29 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+#include <asio.hpp>
 
 LoginWindow::LoginWindow(QWidget *parent)
     : QWidget(parent)
 {
     // 窗口基础设置：标题与固定尺寸，保证布局稳定。
     setWindowTitle(QStringLiteral("chatClient 登录"));
-    setFixedSize(420, 500);
+    setFixedSize(420, 520);
+    setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+    setAttribute(Qt::WA_TranslucentBackground, true);
 
     // 根布局：垂直排布整体结构（标题、页面切换区）。
     auto *rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(32, 28, 32, 28);
-    rootLayout->setSpacing(18);
+    rootLayout->setContentsMargins(18, 18, 18, 18);
+    rootLayout->setSpacing(12);
+
+    // 自定义标题栏：用于窗口拖拽与窗口按钮。
+    m_titleBar = createTitleBar();
 
     // 标题与副标题：在登录/注册之间切换时更新文本。
     m_titleLabel = new QLabel(QStringLiteral("ChatClient"), this);
@@ -37,10 +45,87 @@ LoginWindow::LoginWindow(QWidget *parent)
     m_stack->setCurrentIndex(0);
 
     // 组装整体布局结构。
+    rootLayout->addWidget(m_titleBar);
     rootLayout->addWidget(m_titleLabel);
     rootLayout->addWidget(m_subtitleLabel);
     rootLayout->addWidget(m_stack);
     rootLayout->addStretch(1);
+}
+
+void LoginWindow::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event)
+    // 绘制窗口主体：圆角背景 + 细边框，避免系统边框带来的粗糙感。
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRectF rect = this->rect().adjusted(1.0, 1.0, -1.0, -1.0);
+    const qreal radius = 16.0;
+
+    painter.setBrush(QColor(250, 251, 253));
+    painter.setPen(QPen(QColor(220, 224, 230), 1.0));
+    painter.drawRoundedRect(rect, radius, radius);
+}
+
+void LoginWindow::mousePressEvent(QMouseEvent *event)
+{
+    // 只允许在标题栏范围内拖拽窗口。
+    if (event->button() == Qt::LeftButton && m_titleBar && m_titleBar->geometry().contains(event->pos())) {
+        m_dragging = true;
+        m_dragOffset = event->globalPos() - frameGeometry().topLeft();
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void LoginWindow::mouseMoveEvent(QMouseEvent *event)
+{
+    if (m_dragging && (event->buttons() & Qt::LeftButton)) {
+        move(event->globalPos() - m_dragOffset);
+        event->accept();
+        return;
+    }
+    QWidget::mouseMoveEvent(event);
+}
+
+void LoginWindow::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        m_dragging = false;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+QWidget *LoginWindow::createTitleBar()
+{
+    // 标题栏：左侧拖拽区域 + 右侧窗口按钮。
+    auto *bar = new QWidget(this);
+    bar->setFixedHeight(36);
+    bar->setStyleSheet(QStringLiteral(
+        "QWidget { background: transparent; }"
+        "QPushButton { border: none; width: 28px; height: 28px; border-radius: 6px; }"
+        "QPushButton:hover { background: #e9edf3; }"
+        "QPushButton:pressed { background: #dfe4ea; }"));
+
+    auto *layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(6, 4, 6, 4);
+    layout->setSpacing(6);
+
+
+    auto *minimizeBtn = new QPushButton(QStringLiteral("—"), bar);
+    minimizeBtn->setToolTip(QStringLiteral("最小化"));
+    auto *closeBtn = new QPushButton(QStringLiteral("×"), bar);
+    closeBtn->setToolTip(QStringLiteral("关闭"));
+
+    layout->addStretch(1);
+    layout->addWidget(minimizeBtn);
+    layout->addWidget(closeBtn);
+
+    connect(minimizeBtn, &QPushButton::clicked, this, &QWidget::showMinimized);
+    connect(closeBtn, &QPushButton::clicked, this, &QWidget::close);
+
+    return bar;
 }
 
 void LoginWindow::showRegisterPage()
@@ -72,17 +157,19 @@ QWidget *LoginWindow::createLoginPage()
     card->setStyleSheet(QStringLiteral(
         "QFrame { background: #ffffff; border: 1px solid #e6e6e6; border-radius: 12px; }"));
     auto *cardLayout = new QVBoxLayout(card);
-    cardLayout->setContentsMargins(24, 24, 24, 24);
-    cardLayout->setSpacing(14);
+    cardLayout->setContentsMargins(22, 22, 22, 22);
+    cardLayout->setSpacing(12);
 
     // 账号输入区：标签 + 输入框。
     m_accountEdit = new QLineEdit(card);
     m_accountEdit->setPlaceholderText(QStringLiteral("用户名"));
+    m_accountEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
     // 密码输入区：标签 + 密码框（隐藏输入）。
     m_passwordEdit = new QLineEdit(card);
     m_passwordEdit->setPlaceholderText(QStringLiteral("请输入密码"));
     m_passwordEdit->setEchoMode(QLineEdit::Password);
+    m_passwordEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
     // 选项区：记住我 / 自动登录。
     auto *optionsLayout = new QHBoxLayout();
@@ -132,23 +219,26 @@ QWidget *LoginWindow::createRegisterPage()
     card->setStyleSheet(QStringLiteral(
         "QFrame { background: #ffffff; border: 1px solid #e6e6e6; border-radius: 12px; }"));
     auto *cardLayout = new QVBoxLayout(card);
-    cardLayout->setContentsMargins(24, 24, 24, 24);
+    cardLayout->setContentsMargins(22, 22, 22, 22);
     cardLayout->setSpacing(12);
 
     // 注册账号输入区。
     m_registerAccountEdit = new QLineEdit(card);
     m_registerAccountEdit->setPlaceholderText(QStringLiteral("用户名"));
+    m_registerAccountEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
 
     // 密码输入区。
     m_registerPasswordEdit = new QLineEdit(card);
     m_registerPasswordEdit->setPlaceholderText(QStringLiteral("设置登录密码"));
     m_registerPasswordEdit->setEchoMode(QLineEdit::Password);
+    m_registerPasswordEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
     // 确认密码输入区。
     m_registerConfirmEdit = new QLineEdit(card);
     m_registerConfirmEdit->setPlaceholderText(QStringLiteral("再次输入密码"));
     m_registerConfirmEdit->setEchoMode(QLineEdit::Password);
+    m_registerConfirmEdit->setStyleSheet(QStringLiteral("QLineEdit { padding: 8px 10px; }"));
 
     // 注册提交按钮：用于提交注册信息（逻辑待接入）。
     m_registerSubmitButton = new QPushButton(QStringLiteral("注册"), card);
