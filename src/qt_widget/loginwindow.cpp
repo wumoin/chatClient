@@ -32,10 +32,10 @@ LoginWindow::LoginWindow(QWidget *parent)
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
 
-    // 根布局：垂直排布整体结构（标题、页面切换区）。
+    // 根布局：标题栏贴顶，其余内容放到内部容器里设置边距。
     auto *rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(18, 18, 18, 18);
-    rootLayout->setSpacing(12);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(0);
 
     // 应用全局 QSS：统一输入框与勾选框风格，跨平台一致。
     setStyleSheet(loadGlobalStyle());
@@ -58,12 +58,19 @@ LoginWindow::LoginWindow(QWidget *parent)
     m_stack->addWidget(createRegisterPage());
     m_stack->setCurrentIndex(0);
 
+    // 内容容器：给标题与表单区域提供内边距。
+    auto *content = new QWidget(this);
+    auto *contentLayout = new QVBoxLayout(content);
+    contentLayout->setContentsMargins(18, 12, 18, 18);
+    contentLayout->setSpacing(12);
+
     // 组装整体布局结构。
     rootLayout->addWidget(m_titleBar);
-    rootLayout->addWidget(m_titleLabel);
-    rootLayout->addWidget(m_subtitleLabel);
-    rootLayout->addWidget(m_stack);
-    rootLayout->addStretch(1);
+    contentLayout->addWidget(m_titleLabel);
+    contentLayout->addWidget(m_subtitleLabel);
+    contentLayout->addWidget(m_stack);
+    contentLayout->addStretch(1);
+    rootLayout->addWidget(content);
 }
 
 void LoginWindow::paintEvent(QPaintEvent *event)
