@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
-        <file>styles.qss</file>
+        <file>chatwindow.qss</file>
+        <file>loginwindow.qss</file>
     </qresource>
 </RCC>

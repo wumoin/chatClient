@@ -53,7 +53,14 @@ file(GLOB_RECURSE CHATCLIENT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*"
 )
 
-add_executable(chatClient ${CHATCLIENT_SOURCES})
+set(CHATCLIENT_RESOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/sources/resources.qrc"
+)
+
+add_executable(chatClient
+    ${CHATCLIENT_SOURCES}
+    ${CHATCLIENT_RESOURCES}
+)
 
 # 头文件搜索路径：包含 src 及其所有子目录，便于直接 include 头文件
 set(CHATCLIENT_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/src")

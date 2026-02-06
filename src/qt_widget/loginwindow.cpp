@@ -12,11 +12,13 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <asio.hpp>
+#include <sys/socket.h>
+
 
 // 从 Qt 资源读取全局 QSS：统一管理样式，便于集中修改。
 static QString loadGlobalStyle()
 {
-    QFile file(QStringLiteral(":/styles.qss"));
+    QFile file(QStringLiteral(":/loginwindow.qss"));
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return QString();
     }
@@ -28,7 +30,7 @@ LoginWindow::LoginWindow(QWidget *parent)
 {
     // 窗口基础设置：标题与固定尺寸，保证布局稳定。
     setWindowTitle(QStringLiteral("chatClient 登录"));
-    setFixedSize(420, 520);
+    setFixedSize(420, 460);
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
 
@@ -46,11 +48,11 @@ LoginWindow::LoginWindow(QWidget *parent)
     // 标题与副标题：在登录/注册之间切换时更新文本。
     m_titleLabel = new QLabel(QStringLiteral("ChatClient"), this);
     m_titleLabel->setAlignment(Qt::AlignCenter);
-    m_titleLabel->setStyleSheet(QStringLiteral("font-size: 26px; font-weight: 600;"));
+    m_titleLabel->setObjectName(QStringLiteral("titleLabel"));
 
     m_subtitleLabel = new QLabel(QStringLiteral("欢迎回来，请登录"), this);
     m_subtitleLabel->setAlignment(Qt::AlignCenter);
-    m_subtitleLabel->setStyleSheet(QStringLiteral("color: #6f7782;"));
+    m_subtitleLabel->setObjectName(QStringLiteral("subtitleLabel"));
 
     // 页面容器：使用栈式布局在登录页/注册页之间切换。
     m_stack = new QStackedWidget(this);
@@ -71,6 +73,9 @@ LoginWindow::LoginWindow(QWidget *parent)
     contentLayout->addWidget(m_stack);
     contentLayout->addStretch(1);
     rootLayout->addWidget(content);
+
+    // 点击登录按钮时，隐藏登录窗口并显示聊天窗口。
+    window = new ChatWindow();
 }
 
 void LoginWindow::paintEvent(QPaintEvent *event)
@@ -122,12 +127,8 @@ QWidget *LoginWindow::createTitleBar()
 {
     // 标题栏：左侧拖拽区域 + 右侧窗口按钮。
     auto *bar = new QWidget(this);
+    bar->setObjectName(QStringLiteral("titleBar"));
     bar->setFixedHeight(36);
-    bar->setStyleSheet(QStringLiteral(
-        "QWidget { background: transparent; }"
-        "QPushButton { border: none; width: 28px; height: 28px; border-radius: 6px; }"
-        "QPushButton:hover { background: #e9edf3; }"
-        "QPushButton:pressed { background: #dfe4ea; }"));
 
     auto *layout = new QHBoxLayout(bar);
     layout->setContentsMargins(6, 4, 6, 4);
@@ -175,8 +176,7 @@ QWidget *LoginWindow::createLoginPage()
 {
     // 登录页容器：卡片式布局承载登录表单。
     auto *card = new QFrame(m_stack);
-    card->setStyleSheet(QStringLiteral(
-        "QFrame { background: #ffffff; border: 1px solid #e6e6e6; border-radius: 12px; }"));
+    card->setProperty("panel", QStringLiteral("card"));
     auto *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(22, 22, 22, 22);
     cardLayout->setSpacing(12);
@@ -203,19 +203,19 @@ QWidget *LoginWindow::createLoginPage()
     // 主操作按钮：登录。
     m_loginButton = new QPushButton(QStringLiteral("登录"), card);
     m_loginButton->setMinimumHeight(40);
-    m_loginButton->setStyleSheet(QStringLiteral(
-        "QPushButton { background: #1f6feb; color: #ffffff; border: none; border-radius: 6px; }"
-        "QPushButton:hover { background: #1a5ed0; }"
-        "QPushButton:pressed { background: #144aa6; }"));
+    m_loginButton->setProperty("variant", QStringLiteral("primary"));
+
+    connect(m_loginButton, &QPushButton::clicked, 
+        this, [=](){
+        this->hide();
+        window->show();
+    });
 
     // 辅助操作区：忘记密码提示 + 注册入口。
     auto *helperLayout = new QHBoxLayout();
-    auto *forgotLabel = new QLabel(QStringLiteral("忘记密码？"), card);
-    forgotLabel->setStyleSheet(QStringLiteral("color: #1f6feb;"));
     m_registerButton = new QPushButton(QStringLiteral("注册新账号"), card);
     m_registerButton->setFlat(true);
-    m_registerButton->setStyleSheet(QStringLiteral("color: #1f6feb;"));
-    helperLayout->addWidget(forgotLabel);
+    m_registerButton->setProperty("variant", QStringLiteral("link"));
     helperLayout->addStretch(1);
     helperLayout->addWidget(m_registerButton);
 
@@ -236,8 +236,7 @@ QWidget *LoginWindow::createRegisterPage()
 {
     // 注册页容器：卡片式布局承载注册表单。
     auto *card = new QFrame(m_stack);
-    card->setStyleSheet(QStringLiteral(
-        "QFrame { background: #ffffff; border: 1px solid #e6e6e6; border-radius: 12px; }"));
+    card->setProperty("panel", QStringLiteral("card"));
     auto *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(22, 22, 22, 22);
     cardLayout->setSpacing(12);
@@ -260,21 +259,18 @@ QWidget *LoginWindow::createRegisterPage()
     // 注册提交按钮：用于提交注册信息（逻辑待接入）。
     m_registerSubmitButton = new QPushButton(QStringLiteral("注册"), card);
     m_registerSubmitButton->setMinimumHeight(40);
-    m_registerSubmitButton->setStyleSheet(QStringLiteral(
-        "QPushButton { background: #1f6feb; color: #ffffff; border: none; border-radius: 6px; }"
-        "QPushButton:hover { background: #1a5ed0; }"
-        "QPushButton:pressed { background: #144aa6; }"));
+    m_registerSubmitButton->setProperty("variant", QStringLiteral("primary"));
 
     // 返回登录入口：已注册用户可快速切回登录页。
     auto *backLayout = new QHBoxLayout();
     auto *hintLabel = new QLabel(QStringLiteral("已有账号？"), card);
-    hintLabel->setStyleSheet(QStringLiteral("color: #6f7782;"));
+    hintLabel->setProperty("textRole", QStringLiteral("hint"));
     m_backToLoginButton = new QPushButton(QStringLiteral("返回登录"), card);
     m_backToLoginButton->setFlat(true);
-    m_backToLoginButton->setStyleSheet(QStringLiteral("color: #1f6feb;"));
+    m_backToLoginButton->setProperty("variant", QStringLiteral("link"));
+    backLayout->addStretch(1);
     backLayout->addWidget(hintLabel);
     backLayout->addWidget(m_backToLoginButton);
-    backLayout->addStretch(1);
 
     // 将注册控件按顺序加入卡片布局。
     cardLayout->addWidget(m_registerAccountEdit);

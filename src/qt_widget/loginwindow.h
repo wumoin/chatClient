@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include "chatwindow.h"
 
 class QCheckBox;
 class QLabel;
@@ -72,6 +73,8 @@ private:
     QPushButton *m_registerSubmitButton = nullptr;
     // 注册页返回按钮：回到登录页。
     QPushButton *m_backToLoginButton = nullptr;
+    // 登录成功后打开聊天窗口。
+    ChatWindow *window = nullptr;
 
     // 拖拽状态与偏移。
     bool m_dragging = false;
