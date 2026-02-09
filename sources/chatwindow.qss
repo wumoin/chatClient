@@ -118,44 +118,43 @@ QPushButton#headerGhostButton:pressed {
     background: #d8e5fb;
 }
 
-QScrollArea#messageScrollArea {
+QListView#messageListView {
     background: transparent;
+    border: none;
+    outline: none;
+    padding: 4px;
+}
+
+QListView#messageListView::item {
     border: none;
 }
 
-QWidget#messageContainer {
+QListView#messageListView::item:selected {
     background: transparent;
 }
 
-QFrame#messageBubblePeer {
-    background: #ffffff;
-    border: 1px solid #dbe5f6;
-    border-radius: 12px;
-    max-width: 520px;
+QListView#messageListView QScrollBar:vertical {
+    width: 8px;
+    margin: 2px 0 2px 0;
+    background: transparent;
 }
 
-QFrame#messageBubbleSelf {
-    background: #dcecff;
-    border: 1px solid #b8d3f6;
-    border-radius: 12px;
-    max-width: 520px;
+QListView#messageListView QScrollBar::handle:vertical {
+    background: #c6d6ed;
+    border-radius: 4px;
+    min-height: 32px;
 }
 
-QLabel#messageAuthor {
-    color: #3d4f6b;
-    font-size: 12px;
-    font-weight: 600;
+QListView#messageListView QScrollBar::handle:vertical:hover {
+    background: #b0c6e3;
 }
 
-QLabel#messageText {
-    color: #162740;
-    font-size: 14px;
-    line-height: 20px;
-}
-
-QLabel#messageTime {
-    color: #7d8ea8;
-    font-size: 11px;
+QListView#messageListView QScrollBar::add-line:vertical,
+QListView#messageListView QScrollBar::sub-line:vertical,
+QListView#messageListView QScrollBar::add-page:vertical,
+QListView#messageListView QScrollBar::sub-page:vertical {
+    height: 0;
+    background: transparent;
 }
 
 QFrame#composerPanel {
