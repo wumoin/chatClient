@@ -211,6 +211,7 @@ QWidget *LoginWindow::createLoginPage()
         window->show();
     });
 
+    
     // 辅助操作区：忘记密码提示 + 注册入口。
     auto *helperLayout = new QHBoxLayout();
     m_registerButton = new QPushButton(QStringLiteral("注册新账号"), card);
