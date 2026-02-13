@@ -12,7 +12,12 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <asio.hpp>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/socket.h>
+#endif
 
 
 // 从 Qt 资源读取全局 QSS：统一管理样式，便于集中修改。
