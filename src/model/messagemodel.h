@@ -86,17 +86,55 @@ public:
         FileSizeBytesRole
     };
 
+    /**
+     * @brief 构造消息模型并初始化空数据集。
+     * @param parent 父级 QObject，可为空。
+     */
     explicit MessageModel(QObject *parent = nullptr);
 
+    /**
+     * @brief 返回当前消息总行数。
+     * @param parent 父索引，仅支持顶层时应为无效索引。
+     * @return 顶层消息行数。
+     */
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    /**
+     * @brief 按角色读取指定消息行的数据。
+     * @param index 目标行索引。
+     * @param role 数据角色。
+     * @return 对应角色的数据，若无效则返回空 QVariant。
+     */
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    /**
+     * @brief 返回角色编号到角色名的映射。
+     * @return 角色映射表。
+     */
     QHash<int, QByteArray> roleNames() const override;
 
-    // 追加任意类型消息到模型末尾。
+    /**
+     * @brief 追加任意类型消息项到模型末尾。
+     * @param item 待追加的完整消息结构。
+     */
     void addMessageItem(const MessageItem &item);
-    // 文本消息接口：追加文本类型消息。
+    /**
+     * @brief 追加文本消息。
+     * @param author 发送者名称。
+     * @param text 正文内容。
+     * @param timeText 展示时间文本。
+     * @param fromSelf 是否由当前用户发送。
+     */
     void addTextMessage(const QString &author, const QString &text, const QString &timeText, bool fromSelf);
-    // 便捷接口：追加图片消息（字段可按需留空）。
+    /**
+     * @brief 追加图片消息。
+     * @param author 发送者名称。
+     * @param timeText 展示时间文本。
+     * @param fromSelf 是否由当前用户发送。
+     * @param localPath 本地图片路径。
+     * @param remoteUrl 远端图片地址。
+     * @param width 图片宽度（像素）。
+     * @param height 图片高度（像素）。
+     * @param caption 图片说明文本。
+     */
     void addImageMessage(const QString &author,
                          const QString &timeText,
                          bool fromSelf,
@@ -105,7 +143,17 @@ public:
                          int width = 0,
                          int height = 0,
                          const QString &caption = QString());
-    // 便捷接口：追加文件消息（字段可按需留空）。
+    /**
+     * @brief 追加文件消息。
+     * @param author 发送者名称。
+     * @param timeText 展示时间文本。
+     * @param fromSelf 是否由当前用户发送。
+     * @param fileName 文件名。
+     * @param localPath 本地文件路径。
+     * @param remoteUrl 远端文件地址。
+     * @param sizeBytes 文件大小（字节）。
+     * @param caption 文件说明文本。
+     */
     void addFileMessage(const QString &author,
                         const QString &timeText,
                         bool fromSelf,

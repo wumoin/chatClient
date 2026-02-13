@@ -4,12 +4,10 @@
 #include <QWidget>
 
 class QLineEdit;
-class QListView;
 class QListWidget;
-class QModelIndex;
-class QPoint;
 class QTextEdit;
-class MessageModel;
+class MessageListView;
+class MessageModelRegistry;
 
 // ChatWindow 仅承担“界面展示”职责：
 // 1) 构建聊天页面布局（会话列表、消息区、输入区）。
@@ -22,29 +20,36 @@ class ChatWindow : public QWidget
     Q_OBJECT
 
 public:
-    // 构造函数：
-    // 初始化窗口尺寸与标题，创建左右两栏布局，并加载聊天窗口专用 QSS。
+    /**
+     * @brief 构造聊天窗口并完成主界面初始化。
+     * @param parent 父级 QWidget，可为空。
+     */
     explicit ChatWindow(QWidget *parent = nullptr);
 
 private:
-    // 创建左侧边栏：
-    // 包含品牌标题、会话搜索框、会话列表和底部用户信息卡片。
+    /**
+     * @brief 创建左侧会话导航栏。
+     * @return 左侧导航栏容器指针。
+     */
     QWidget *createSidebar();
 
-    // 创建右侧聊天主面板：
-    // 包含顶部会话信息栏、消息滚动区域、底部消息输入区与操作按钮。
+    /**
+     * @brief 创建右侧聊天主面板。
+     * @return 右侧主面板容器指针。
+     */
     QWidget *createChatPanel();
 
-    // 追加消息到模型，并滚动到底部。
+    /**
+     * @brief 向当前会话追加一条文本消息并滚动到底部。
+     * @param author 发送者名称。
+     * @param text 消息正文。
+     * @param fromSelf 是否为当前用户发送。
+     */
     void appendMessage(const QString &author, const QString &text, bool fromSelf);
-    // 处理发送动作：读取输入框文本并写入消息模型。
+    /**
+     * @brief 处理发送动作并将输入框内容写入当前会话。
+     */
     void handleSendMessage();
-    // 复制指定消息行的正文到剪贴板。
-    void copyMessageText(const QModelIndex &index);
-    // 复制当前选中消息正文。
-    void copyCurrentMessageText();
-    // 显示消息列表右键菜单（包含复制操作）。
-    void showMessageContextMenu(const QPoint &pos);
 
     // 左侧：会话搜索输入框。
     QLineEdit *m_searchEdit = nullptr;
@@ -52,9 +57,11 @@ private:
     QListWidget *m_sessionList = nullptr;
 
     // 右侧：消息列表视图（QListView + model + delegate）。
-    QListView *m_messageListView = nullptr;
-    // 右侧：消息数据模型。
-    MessageModel *m_messageModel = nullptr;
+    MessageListView *m_messageListView = nullptr;
+    // 消息模型注册表：管理多会话 MessageModel。
+    MessageModelRegistry *m_messageModelRegistry = nullptr;
+    // 当前聊天会话 id（用于选择注册表中的目标模型）。
+    QString m_currentConversationId;
     // 右侧：底部文本输入框。
     QTextEdit *m_messageEditor = nullptr;
 };

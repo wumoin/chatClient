@@ -1,20 +1,17 @@
 #include "chatwindow.h"
 
-#include "delegate/messagedelegate.h"
 #include "model/messagemodel.h"
+#include "model/messagemodelregistry.h"
+#include "view/messagelistview.h"
 
 #include <QAbstractItemView>
-#include <QClipboard>
 #include <QFile>
 #include <QFrame>
-#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListView>
 #include <QListWidget>
-#include <QMenu>
 #include <QPushButton>
 #include <QShortcut>
 #include <QTextEdit>
@@ -22,9 +19,6 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-// 从 Qt 资源系统读取聊天窗口专用样式。
-// 约定：ChatWindow 只读取 chatwindow.qss，避免与登录窗口样式耦合。
-// 若读取失败，返回空字符串，界面会退化为 Qt 默认样式，但不影响程序运行。
 static QString loadChatStyleSheet()
 {
     QFile file(QStringLiteral(":/chatwindow.qss"));
@@ -153,43 +147,27 @@ QWidget *ChatWindow::createChatPanel()
     headerLayout->addWidget(videoBtn);
 
     // 消息区域：
-    // 使用 QListView + model + delegate，避免为每条消息创建 QWidget。
-    m_messageListView = new QListView(panel);
+    // 使用 MessageListView，模型由 MessageModelRegistry 注入。
+    m_messageListView = new MessageListView(panel);
     m_messageListView->setObjectName(QStringLiteral("messageListView"));
-    m_messageListView->setFrameShape(QFrame::NoFrame);
-    m_messageListView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // 聊天气泡高度不固定，按像素滚动比按 item 滚动更平滑。
-    m_messageListView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    // 为“复制当前消息”保留单选能力（视觉由 delegate 决定，不额外高亮整行背景）。
-    m_messageListView->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_messageListView->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    // 各行高度由 delegate::sizeHint 动态计算，不能开启 uniformItemSizes。
-    m_messageListView->setUniformItemSizes(false);
-    // 点击后允许获得焦点，这样 Ctrl+C 可以作用于当前消息。
-    m_messageListView->setFocusPolicy(Qt::ClickFocus);
-    m_messageListView->setContextMenuPolicy(Qt::CustomContextMenu);
-
-    m_messageModel = new MessageModel(m_messageListView);
-    m_messageListView->setModel(m_messageModel);
-    // 委托负责气泡样式与布局，QListView 本身只管复用和滚动。
-    m_messageListView->setItemDelegate(new MessageDelegate(m_messageListView));
-    connect(m_messageListView, &QListView::customContextMenuRequested, this, &ChatWindow::showMessageContextMenu);
-    auto *copyShortcut = new QShortcut(QKeySequence::Copy, m_messageListView);
-    copyShortcut->setContext(Qt::WidgetShortcut);
-    connect(copyShortcut, &QShortcut::activated, this, &ChatWindow::copyCurrentMessageText);
-
-    m_messageModel->addTextMessage(QStringLiteral("李华"),
-                                   QStringLiteral("大家看下这版首页布局，今天定稿。"),
-                                   QStringLiteral("09:12"),
-                                   false);
-    m_messageModel->addTextMessage(QStringLiteral("我"),
-                                   QStringLiteral("收到，我这边会把组件拆分同步到前端仓库。"),
-                                   QStringLiteral("09:14"),
-                                   true);
-    m_messageModel->addTextMessage(QStringLiteral("产品经理"),
-                                   QStringLiteral("别忘了把移动端间距规范也补上。"),
-                                   QStringLiteral("09:15"),
-                                   false);
+    m_messageModelRegistry = new MessageModelRegistry(this);
+    m_currentConversationId = QStringLiteral("product_discussion");
+    m_messageListView->setMessageModel(m_messageModelRegistry->ensureModel(m_currentConversationId));
+    m_messageModelRegistry->addTextMessage(m_currentConversationId,
+                                           QStringLiteral("李华"),
+                                           QStringLiteral("大家看下这版首页布局，今天定稿。"),
+                                           QStringLiteral("09:12"),
+                                           false);
+    m_messageModelRegistry->addTextMessage(m_currentConversationId,
+                                           QStringLiteral("我"),
+                                           QStringLiteral("收到，我这边会把组件拆分同步到前端仓库。"),
+                                           QStringLiteral("09:14"),
+                                           true);
+    m_messageModelRegistry->addTextMessage(m_currentConversationId,
+                                           QStringLiteral("产品经理"),
+                                           QStringLiteral("别忘了把移动端间距规范也补上。"),
+                                           QStringLiteral("09:15"),
+                                           false);
 
     // 底部输入区：输入框 + 操作按钮。
     auto *composer = new QFrame(panel);
@@ -250,15 +228,16 @@ QWidget *ChatWindow::createChatPanel()
 
 void ChatWindow::appendMessage(const QString &author, const QString &text, bool fromSelf)
 {
-    if (!m_messageModel || !m_messageListView) {
+    if (!m_messageListView || !m_messageModelRegistry || m_currentConversationId.isEmpty()) {
         return;
     }
 
     // 时间在 UI 层统一格式化，后续接入服务端时间时可在此改成时间戳转换。
-    m_messageModel->addTextMessage(author,
-                                   text,
-                                   QTime::currentTime().toString(QStringLiteral("HH:mm")),
-                                   fromSelf);
+    m_messageModelRegistry->addTextMessage(m_currentConversationId,
+                                           author,
+                                           text,
+                                           QTime::currentTime().toString(QStringLiteral("HH:mm")),
+                                           fromSelf);
     m_messageListView->scrollToBottom();
 }
 
@@ -276,54 +255,4 @@ void ChatWindow::handleSendMessage()
 
     appendMessage(QStringLiteral("我"), text, true);
     m_messageEditor->clear();
-}
-
-void ChatWindow::copyMessageText(const QModelIndex &index)
-{
-    if (!index.isValid()) {
-        return;
-    }
-
-    QString text = index.data(MessageModel::TextRole).toString();
-    // 非文本消息可能没有纯 text 字段，此时回退复制展示文案（如 [图片消息]/[文件] xxx）。
-    if (text.isEmpty()) {
-        text = index.data(Qt::DisplayRole).toString();
-    }
-    if (text.isEmpty()) {
-        return;
-    }
-
-    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
-        clipboard->setText(text, QClipboard::Clipboard);
-        clipboard->setText(text, QClipboard::Selection);
-    }
-}
-
-void ChatWindow::copyCurrentMessageText()
-{
-    if (!m_messageListView) {
-        return;
-    }
-    copyMessageText(m_messageListView->currentIndex());
-}
-
-void ChatWindow::showMessageContextMenu(const QPoint &pos)
-{
-    if (!m_messageListView) {
-        return;
-    }
-
-    const QModelIndex index = m_messageListView->indexAt(pos);
-    if (!index.isValid()) {
-        return;
-    }
-
-    m_messageListView->setCurrentIndex(index);
-    QMenu menu(m_messageListView);
-    QAction *copyAction = menu.addAction(QStringLiteral("复制消息"));
-
-    const QAction *chosen = menu.exec(m_messageListView->viewport()->mapToGlobal(pos));
-    if (chosen == copyAction) {
-        copyMessageText(index);
-    }
 }

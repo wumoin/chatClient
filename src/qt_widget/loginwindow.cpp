@@ -20,7 +20,6 @@
 #endif
 
 
-// 从 Qt 资源读取全局 QSS：统一管理样式，便于集中修改。
 static QString loadGlobalStyle()
 {
     QFile file(QStringLiteral(":/loginwindow.qss"));

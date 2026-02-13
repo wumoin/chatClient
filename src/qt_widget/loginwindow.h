@@ -18,28 +18,58 @@ class LoginWindow : public QWidget
     Q_OBJECT
 
 public:
-    // 构造函数：完成界面搭建与基础样式设置。
+    /**
+     * @brief 构造登录窗口并初始化登录/注册页面。
+     * @param parent 父级 QWidget，可为空。
+     */
     explicit LoginWindow(QWidget *parent = nullptr);
 
 private:
-    // 绘制自定义窗口边框与圆角背景。
+    /**
+     * @brief 绘制窗口背景与圆角边框。
+     * @param event 绘制事件对象。
+     */
     void paintEvent(QPaintEvent *event) override;
-    // 处理窗口拖拽移动。
+    /**
+     * @brief 处理鼠标按下事件并记录拖拽起点。
+     * @param event 鼠标事件对象。
+     */
     void mousePressEvent(QMouseEvent *event) override;
+    /**
+     * @brief 处理鼠标移动事件并在拖拽时移动窗口。
+     * @param event 鼠标事件对象。
+     */
     void mouseMoveEvent(QMouseEvent *event) override;
+    /**
+     * @brief 处理鼠标释放事件并结束拖拽状态。
+     * @param event 鼠标事件对象。
+     */
     void mouseReleaseEvent(QMouseEvent *event) override;
 
-    // 初始化自定义标题栏（拖拽区 + 窗口按钮）。
+    /**
+     * @brief 创建自定义标题栏及窗口控制按钮。
+     * @return 标题栏容器指针。
+     */
     QWidget *createTitleBar();
 
-    // 登录页切换到注册页。
+    /**
+     * @brief 切换到注册页面并刷新标题提示文案。
+     */
     void showRegisterPage();
-    // 注册页切换回登录页。
+    /**
+     * @brief 切换回登录页面并恢复标题提示文案。
+     */
     void showLoginPage();
 
-    // 创建登录页控件并返回页面容器。
+    /**
+     * @brief 创建登录页控件树。
+     * @return 登录页容器指针。
+     */
     QWidget *createLoginPage();
-    // 创建注册页控件并返回页面容器。
+    /**
+     * @brief 创建注册页控件树。
+     * @return 注册页容器指针。
+     */
     QWidget *createRegisterPage();
 
     // 标题与副标题：用于提示当前所处流程。
