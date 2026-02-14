@@ -12,6 +12,7 @@
 #include <QTextLayout>
 #include <QTextOption>
 #include <QtMath>
+#include <iostream>
 
 namespace {
 // 行级留白：让消息之间有呼吸感，同时给滚动条预留视觉空间。
@@ -68,7 +69,19 @@ QString fallbackText(const QModelIndex &index)
     if (text.isEmpty()) {
         text = index.data(Qt::DisplayRole).toString();
     }
+    //std::cout << text.toStdString() << '\n';
     return text;
+}
+
+QString textForLayout(const QString &text)
+{
+    // QTextLayout 不会将 '\n' 直接当作硬换行；替换为段落分隔符后可与 drawText 的多行效果对齐。
+    if (!text.contains(u'\n')) {
+        return text;
+    }
+    QString layoutText = text;
+    layoutText.replace(u'\n', QChar::LineSeparator);
+    return layoutText;
 }
 
 qreal layoutTextHeight(const QString &text, const QFont &font, int textWidth)
@@ -77,11 +90,12 @@ qreal layoutTextHeight(const QString &text, const QFont &font, int textWidth)
     // 使用 QTextLayout 显式分行，避免仅靠 QFontMetrics::boundingRect 在特殊换行场景下偏差。
     const int safeTextWidth = qMax(kTextMinLayoutWidth, textWidth);
     const QFontMetrics metrics(font);
-    if (text.isEmpty()) {
+    const QString layoutText = textForLayout(text);
+    if (layoutText.isEmpty()) {
         return metrics.lineSpacing();
     }
 
-    QTextLayout layout(text, font);
+    QTextLayout layout(layoutText, font);
     QTextOption option;
     option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     layout.setTextOption(option);
@@ -175,11 +189,12 @@ void drawTextSelectionBackground(QPainter *painter,
                                  int selectStart,
                                  int selectEnd)
 {
-    if (selectStart >= selectEnd || text.isEmpty() || messageRect.width() <= 0 || messageRect.height() <= 0) {
+    const QString layoutText = textForLayout(text);
+    if (selectStart >= selectEnd || layoutText.isEmpty() || messageRect.width() <= 0 || messageRect.height() <= 0) {
         return;
     }
 
-    QTextLayout layout(text, font);
+    QTextLayout layout(layoutText, font);
     QTextOption option;
     option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     layout.setTextOption(option);
@@ -242,7 +257,8 @@ int cursorAtTextPosition(const QRect &messageRect,
         return 0;
     }
 
-    QTextLayout layout(text, font);
+    const QString layoutText = textForLayout(text);
+    QTextLayout layout(layoutText, font);
     QTextOption option;
     option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     layout.setTextOption(option);
