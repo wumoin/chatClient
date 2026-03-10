@@ -18,34 +18,6 @@ set(CMAKE_AUTOUIC ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
-# ASIO（header-only）依赖：默认使用内置下载，必要时可切到系统库
-option(CHATCLIENT_USE_SYSTEM_ASIO "Use system installed Asio" OFF)
-
-if (CHATCLIENT_USE_SYSTEM_ASIO)
-    find_package(Asio REQUIRED)
-    add_library(chatclient_asio INTERFACE)
-    if (TARGET Asio::asio)
-        target_link_libraries(chatclient_asio INTERFACE Asio::asio)
-    elseif (TARGET Asio::Asio)
-        target_link_libraries(chatclient_asio INTERFACE Asio::Asio)
-    else()
-        message(FATAL_ERROR "Asio target not found. Expected Asio::asio or Asio::Asio.")
-    endif()
-else()
-    include(FetchContent)
-    FetchContent_Declare(
-        asio
-        GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-        GIT_TAG asio-1-28-0
-    )
-    FetchContent_MakeAvailable(asio)
-
-    add_library(chatclient_asio INTERFACE)
-    target_include_directories(chatclient_asio INTERFACE
-        "${asio_SOURCE_DIR}/asio/include"
-    )
-    target_compile_definitions(chatclient_asio INTERFACE ASIO_STANDALONE)
-endif()
 
 # 应用目标（收集 src 目录下所有文件）
 file(GLOB_RECURSE CHATCLIENT_SOURCES
@@ -76,13 +48,11 @@ if (WIN32)
     target_compile_definitions(chatClient PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 
-# 链接 Qt Widgets + Asio
+# 链接 Qt Widgets
 target_link_libraries(chatClient PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
-    chatclient_asio
 )
 
-# Windows 下 Asio 需要 Winsock 库（关键：解决 __imp_WSAStartup 等 undefined reference）
 if (WIN32)
     target_link_libraries(chatClient PRIVATE ws2_32)
     # 如遇到其它网络相关符号缺失，可再打开下面两个：
