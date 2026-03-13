@@ -30,6 +30,12 @@ public:
     static const AppConfig &instance();
 
     /**
+     * @brief 返回当前实际加载的配置文件路径。
+     * @return 配置文件绝对路径字符串。
+     */
+    const QString &configFilePath() const;
+
+    /**
      * @brief 返回应用展示名称。
      * @return 例如 `ChatClient` 这样的应用名字符串。
      */
@@ -77,6 +83,54 @@ public:
      */
     QString httpBaseUrlText() const;
 
+    /**
+     * @brief 返回日志前缀中的应用名。
+     * @return 日志模块统一使用的应用名。
+     */
+    const QString &logAppName() const;
+
+    /**
+     * @brief 返回日志最小输出级别文本。
+     * @return 例如 `INFO`、`DEBUG` 这样的日志级别字符串。
+     */
+    const QString &logMinimumLevel() const;
+
+    /**
+     * @brief 判断是否启用控制台日志输出。
+     * @return true 表示输出到控制台；false 表示关闭控制台输出。
+     */
+    bool isConsoleLogEnabled() const;
+
+    /**
+     * @brief 判断是否启用文件日志输出。
+     * @return true 表示输出到日志文件；false 表示关闭文件输出。
+     */
+    bool isFileLogEnabled() const;
+
+    /**
+     * @brief 判断日志时间是否使用本地时区显示。
+     * @return true 表示使用本地时间；false 表示使用 UTC 时间。
+     */
+    bool displayLocalTimeInLog() const;
+
+    /**
+     * @brief 返回日志文件目录配置原值。
+     * @return `app.json` 中配置的日志目录文本。
+     */
+    const QString &logDirectory() const;
+
+    /**
+     * @brief 返回日志文件名配置原值。
+     * @return `app.json` 中配置的日志文件名文本。
+     */
+    const QString &logFileName() const;
+
+    /**
+     * @brief 返回解析后的日志文件绝对路径。
+     * @return 以配置文件目录为基准解析后的日志文件绝对路径。
+     */
+    QString resolvedLogFilePath() const;
+
 private:
     /**
      * @brief 从默认配置文件路径加载配置内容。
@@ -104,6 +158,40 @@ private:
                                    QString *out,
                                    QString *errorMessage);
 
+    /**
+     * @brief 读取可选字符串字段。
+     * @param object 待读取的 JSON 对象。
+     * @param key 字段名。
+     * @param out 成功时写入的字符串值。
+     * @param errorMessage 类型不匹配时写入的错误消息。
+     * @return true 表示字段缺失或读取成功；false 表示类型不匹配或为空。
+     */
+    static bool readOptionalString(const QJsonObject &object,
+                                   const QString &key,
+                                   QString *out,
+                                   QString *errorMessage);
+
+    /**
+     * @brief 读取可选布尔字段。
+     * @param object 待读取的 JSON 对象。
+     * @param key 字段名。
+     * @param out 成功时写入的布尔值。
+     * @param errorMessage 类型不匹配时写入的错误消息。
+     * @return true 表示字段缺失或读取成功；false 表示类型不匹配。
+     */
+    static bool readOptionalBool(const QJsonObject &object,
+                                 const QString &key,
+                                 bool *out,
+                                 QString *errorMessage);
+
+    /**
+     * @brief 校验日志级别文本是否受支持。
+     * @param levelText 日志级别原始文本。
+     * @return true 表示当前客户端日志模块支持该级别；false 表示不支持。
+     */
+    static bool isSupportedLogLevel(const QString &levelText);
+
+    QString configFilePath_;
     QString displayName_;
     QString loginWindowTitle_;
     QString chatWindowTitle_;
@@ -111,6 +199,13 @@ private:
     QString registerPath_;
     QString loginPath_;
     QUrl webSocketUrl_;
+    QString logAppName_;
+    QString logMinimumLevel_ = QStringLiteral("INFO");
+    bool logEnableConsole_ = true;
+    bool logEnableFile_ = true;
+    bool logDisplayLocalTime_ = true;
+    QString logDirectory_ = QStringLiteral("../logs");
+    QString logFileName_ = QStringLiteral("chatclient.log");
 };
 
 }  // namespace chatclient::config

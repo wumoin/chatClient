@@ -1,6 +1,7 @@
 #include "api/auth_api_client.h"
 
 #include "config/appconfig.h"
+#include "log/app_logger.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -25,6 +26,14 @@ void AuthApiClient::registerUser(
 {
     const QString requestId = createRequestId();
     const QUrl registerUrl = chatclient::config::AppConfig::instance().registerUrl();
+
+    CHATCLIENT_LOG_INFO("auth.api")
+        << "sending register request request_id="
+        << requestId
+        << " url="
+        << registerUrl.toString()
+        << " account="
+        << request.account;
 
     // 注册接口属于标准 JSON POST 请求。
     // 这里统一从 AppConfig 读取地址，并注入 request_id，避免窗口层重复拼接 URL。
@@ -72,6 +81,14 @@ void AuthApiClient::registerUser(
                             response.requestId = requestId;
                         }
 
+                        CHATCLIENT_LOG_INFO("auth.api")
+                            << "register request succeeded request_id="
+                            << response.requestId
+                            << " http_status="
+                            << httpStatus
+                            << " user_id="
+                            << response.user.userId;
+
                         if (onSuccess)
                         {
                             onSuccess(response);
@@ -90,6 +107,13 @@ void AuthApiClient::registerUser(
                         error.message = errorMessage.isEmpty()
                                             ? fallbackMessage
                                             : errorMessage;
+                        CHATCLIENT_LOG_ERROR("auth.api")
+                            << "register success response parse failed request_id="
+                            << requestId
+                            << " http_status="
+                            << httpStatus
+                            << " error="
+                            << error.message;
                         onFailure(error);
                     }
 
@@ -107,6 +131,15 @@ void AuthApiClient::registerUser(
                         {
                             error.requestId = requestId;
                         }
+                        CHATCLIENT_LOG_WARN("auth.api")
+                            << "register request failed request_id="
+                            << error.requestId
+                            << " http_status="
+                            << httpStatus
+                            << " error_code="
+                            << error.errorCode
+                            << " message="
+                            << error.message;
                         onFailure(error);
                     }
                     else
@@ -115,6 +148,13 @@ void AuthApiClient::registerUser(
                         error.httpStatus = httpStatus;
                         error.requestId = requestId;
                         error.message = fallbackMessage;
+                        CHATCLIENT_LOG_WARN("auth.api")
+                            << "register request returned non-json response request_id="
+                            << requestId
+                            << " http_status="
+                            << httpStatus
+                            << " message="
+                            << error.message;
                         onFailure(error);
                     }
                 }

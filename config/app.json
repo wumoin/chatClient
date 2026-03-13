@@ -13,5 +13,14 @@
         "ws": {
             "url": "ws://127.0.0.1:8848/ws"
         }
+    },
+    "log": {
+        "app_name": "chatClient",
+        "minimum_level": "INFO",
+        "enable_console": true,
+        "enable_file": true,
+        "display_local_time": true,
+        "directory": "../logs",
+        "file_name": "chatclient.log"
     }
 }

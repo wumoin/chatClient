@@ -1,5 +1,7 @@
 #include "service/auth_service.h"
 
+#include "log/app_logger.h"
+
 #include <QRegularExpression>
 
 namespace chatclient::service {
@@ -31,6 +33,8 @@ bool AuthService::registerUser(const QString &account,
 {
     if (m_registering)
     {
+        CHATCLIENT_LOG_WARN("auth.service")
+            << "register request ignored because another request is still running";
         if (errorMessage)
         {
             *errorMessage = QStringLiteral("注册请求正在提交，请稍候");
@@ -46,20 +50,44 @@ bool AuthService::registerUser(const QString &account,
                               &request,
                               errorMessage))
     {
+        CHATCLIENT_LOG_WARN("auth.service")
+            << "register validation failed account="
+            << account
+            << " reason="
+            << (errorMessage != nullptr ? *errorMessage : QString());
         return false;
     }
 
     m_registering = true;
     emit registerStarted();
+    CHATCLIENT_LOG_INFO("auth.service")
+        << "register request started account="
+        << request.account
+        << " nickname="
+        << request.nickname;
 
     m_authApiClient.registerUser(
         request,
         [this](const chatclient::dto::auth::RegisterResponseDto &response) {
             m_registering = false;
+            CHATCLIENT_LOG_INFO("auth.service")
+                << "register request completed request_id="
+                << response.requestId
+                << " user_id="
+                << response.user.userId;
             emit registerSucceeded(response.user);
         },
         [this](const chatclient::dto::auth::ApiErrorDto &error) {
             m_registering = false;
+            CHATCLIENT_LOG_WARN("auth.service")
+                << "register request failed request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
             emit registerFailed(error.message.isEmpty()
                                     ? QStringLiteral("注册失败，请稍后重试")
                                     : error.message);

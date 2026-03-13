@@ -1,6 +1,7 @@
 #include "loginwindow.h"
 
 #include "config/appconfig.h"
+#include "log/app_logger.h"
 #include "service/auth_service.h"
 
 #include <QCheckBox>
@@ -183,6 +184,7 @@ void LoginWindow::showRegisterPage()
     if (!m_stack) {
         return;
     }
+    CHATCLIENT_LOG_INFO("login.window") << "switching to register page";
     m_stack->setCurrentIndex(1);
     m_titleLabel->setText(QStringLiteral("创建账号"));
     m_subtitleLabel->setText(QStringLiteral("填写信息以注册新账号"));
@@ -195,6 +197,7 @@ void LoginWindow::showLoginPage()
     if (!m_stack) {
         return;
     }
+    CHATCLIENT_LOG_INFO("login.window") << "switching to login page";
     m_stack->setCurrentIndex(0);
     m_titleLabel->setText(
         chatclient::config::AppConfig::instance().displayName());
@@ -348,12 +351,19 @@ void LoginWindow::handleRegisterSubmit()
         return;
     }
 
+    CHATCLIENT_LOG_INFO("login.window")
+        << "register submit clicked account="
+        << (m_registerAccountEdit ? m_registerAccountEdit->text() : QString());
+
     QString errorMessage;
     if (!m_authService->registerUser(m_registerAccountEdit ? m_registerAccountEdit->text() : QString(),
                                      m_registerNicknameEdit ? m_registerNicknameEdit->text() : QString(),
                                      m_registerPasswordEdit ? m_registerPasswordEdit->text() : QString(),
                                      m_registerConfirmEdit ? m_registerConfirmEdit->text() : QString(),
                                      &errorMessage)) {
+        CHATCLIENT_LOG_WARN("login.window")
+            << "register submit rejected message="
+            << errorMessage;
         setRegisterStatusMessage(errorMessage, RegisterStatusTone::kError);
         return;
     }
@@ -362,6 +372,11 @@ void LoginWindow::handleRegisterSubmit()
 void LoginWindow::handleRegisterSucceeded(
     const chatclient::dto::auth::RegisterUserDto &user)
 {
+    CHATCLIENT_LOG_INFO("login.window")
+        << "register succeeded user_id="
+        << user.userId
+        << " account="
+        << user.account;
     setRegisterSubmitting(false);
     setRegisterStatusMessage(QStringLiteral("注册成功，请返回登录页继续。"),
                              RegisterStatusTone::kSuccess);
@@ -395,6 +410,9 @@ void LoginWindow::handleRegisterSucceeded(
 
 void LoginWindow::handleRegisterFailed(const QString &message)
 {
+    CHATCLIENT_LOG_WARN("login.window")
+        << "register failed message="
+        << message;
     setRegisterSubmitting(false);
     setRegisterStatusMessage(message, RegisterStatusTone::kError);
 }

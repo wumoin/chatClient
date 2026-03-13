@@ -1,6 +1,8 @@
 #include "config/appconfig.h"
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -33,6 +35,11 @@ bool AppConfig::initialize(QString *errorMessage)
 const AppConfig &AppConfig::instance()
 {
     return g_appConfig;
+}
+
+const QString &AppConfig::configFilePath() const
+{
+    return configFilePath_;
 }
 
 const QString &AppConfig::displayName() const
@@ -75,9 +82,67 @@ QString AppConfig::httpBaseUrlText() const
     return httpBaseUrl_.toString();
 }
 
+const QString &AppConfig::logAppName() const
+{
+    return logAppName_;
+}
+
+const QString &AppConfig::logMinimumLevel() const
+{
+    return logMinimumLevel_;
+}
+
+bool AppConfig::isConsoleLogEnabled() const
+{
+    return logEnableConsole_;
+}
+
+bool AppConfig::isFileLogEnabled() const
+{
+    return logEnableFile_;
+}
+
+bool AppConfig::displayLocalTimeInLog() const
+{
+    return logDisplayLocalTime_;
+}
+
+const QString &AppConfig::logDirectory() const
+{
+    return logDirectory_;
+}
+
+const QString &AppConfig::logFileName() const
+{
+    return logFileName_;
+}
+
+QString AppConfig::resolvedLogFilePath() const
+{
+    if (!logEnableFile_)
+    {
+        return QString();
+    }
+
+    const QFileInfo configFileInfo(configFilePath_);
+    const QDir configDir = configFileInfo.dir();
+
+    QFileInfo configuredFileInfo(logFileName_);
+    if (configuredFileInfo.isAbsolute())
+    {
+        return QDir::cleanPath(configuredFileInfo.absoluteFilePath());
+    }
+
+    const QString directoryPath = logDirectory_.trimmed().isEmpty()
+                                      ? configDir.absolutePath()
+                                      : configDir.absoluteFilePath(logDirectory_);
+    return QDir::cleanPath(QDir(directoryPath).absoluteFilePath(logFileName_));
+}
+
 bool AppConfig::load(QString *errorMessage)
 {
-    QFile file(defaultConfigPath());
+    configFilePath_ = defaultConfigPath();
+    QFile file(configFilePath_);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
     {
         if (errorMessage)
@@ -104,6 +169,7 @@ bool AppConfig::load(QString *errorMessage)
     const QJsonObject root = document.object();
     const QJsonValue appValue = root.value(QStringLiteral("app"));
     const QJsonValue servicesValue = root.value(QStringLiteral("services"));
+    const QJsonValue logValue = root.value(QStringLiteral("log"));
     if (!appValue.isObject() || !servicesValue.isObject())
     {
         if (errorMessage)
@@ -130,6 +196,8 @@ bool AppConfig::load(QString *errorMessage)
 
     QString httpBaseUrlText;
     QString webSocketUrlText;
+
+    logAppName_ = displayName_;
 
     if (!readRequiredString(appObject,
                             QStringLiteral("display_name"),
@@ -163,6 +231,48 @@ bool AppConfig::load(QString *errorMessage)
         return false;
     }
 
+    logAppName_ = displayName_;
+
+    if (logValue.isObject())
+    {
+        const QJsonObject logObject = logValue.toObject();
+        QString configuredLogLevel = logMinimumLevel_;
+
+        if (!readOptionalString(logObject,
+                                QStringLiteral("app_name"),
+                                &logAppName_,
+                                errorMessage) ||
+            !readOptionalString(logObject,
+                                QStringLiteral("minimum_level"),
+                                &configuredLogLevel,
+                                errorMessage) ||
+            !readOptionalBool(logObject,
+                              QStringLiteral("enable_console"),
+                              &logEnableConsole_,
+                              errorMessage) ||
+            !readOptionalBool(logObject,
+                              QStringLiteral("enable_file"),
+                              &logEnableFile_,
+                              errorMessage) ||
+            !readOptionalBool(logObject,
+                              QStringLiteral("display_local_time"),
+                              &logDisplayLocalTime_,
+                              errorMessage) ||
+            !readOptionalString(logObject,
+                                QStringLiteral("directory"),
+                                &logDirectory_,
+                                errorMessage) ||
+            !readOptionalString(logObject,
+                                QStringLiteral("file_name"),
+                                &logFileName_,
+                                errorMessage))
+        {
+            return false;
+        }
+
+        logMinimumLevel_ = configuredLogLevel.trimmed().toUpper();
+    }
+
     httpBaseUrl_ = QUrl(httpBaseUrlText);
     webSocketUrl_ = QUrl(webSocketUrlText);
 
@@ -190,6 +300,17 @@ bool AppConfig::load(QString *errorMessage)
         return false;
     }
 
+    if (!isSupportedLogLevel(logMinimumLevel_))
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral("log.minimum_level 不受支持：%1")
+                    .arg(logMinimumLevel_);
+        }
+        return false;
+    }
+
     if (!registerPath_.startsWith(QLatin1Char('/')) ||
         !loginPath_.startsWith(QLatin1Char('/')))
     {
@@ -197,6 +318,24 @@ bool AppConfig::load(QString *errorMessage)
         {
             *errorMessage =
                 QStringLiteral("register_path 和 login_path 必须以 / 开头");
+        }
+        return false;
+    }
+
+    if (logAppName_.trimmed().isEmpty())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("log.app_name 不能为空");
+        }
+        return false;
+    }
+
+    if (logEnableFile_ && logFileName_.trimmed().isEmpty())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("log.file_name 不能为空");
         }
         return false;
     }
@@ -241,6 +380,84 @@ bool AppConfig::readRequiredString(const QJsonObject &object,
         *out = text;
     }
     return true;
+}
+
+bool AppConfig::readOptionalString(const QJsonObject &object,
+                                   const QString &key,
+                                   QString *out,
+                                   QString *errorMessage)
+{
+    const QJsonValue value = object.value(key);
+    if (value.isUndefined() || value.isNull())
+    {
+        return true;
+    }
+
+    if (!value.isString())
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral("客户端配置字段 %1 必须是字符串").arg(key);
+        }
+        return false;
+    }
+
+    const QString text = value.toString().trimmed();
+    if (text.isEmpty())
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral("客户端配置字段 %1 不能为空").arg(key);
+        }
+        return false;
+    }
+
+    if (out)
+    {
+        *out = text;
+    }
+    return true;
+}
+
+bool AppConfig::readOptionalBool(const QJsonObject &object,
+                                 const QString &key,
+                                 bool *out,
+                                 QString *errorMessage)
+{
+    const QJsonValue value = object.value(key);
+    if (value.isUndefined() || value.isNull())
+    {
+        return true;
+    }
+
+    if (!value.isBool())
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral("客户端配置字段 %1 必须是布尔值").arg(key);
+        }
+        return false;
+    }
+
+    if (out)
+    {
+        *out = value.toBool();
+    }
+    return true;
+}
+
+bool AppConfig::isSupportedLogLevel(const QString &levelText)
+{
+    return levelText == QStringLiteral("DEBUG") ||
+           levelText == QStringLiteral("INFO") ||
+           levelText == QStringLiteral("WARN") ||
+           levelText == QStringLiteral("WARNING") ||
+           levelText == QStringLiteral("ERROR") ||
+           levelText == QStringLiteral("CRITICAL") ||
+           levelText == QStringLiteral("FATAL");
 }
 
 }  // namespace chatclient::config
