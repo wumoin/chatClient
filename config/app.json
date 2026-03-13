@@ -1,0 +1,17 @@
+{
+    "app": {
+        "display_name": "ChatClient",
+        "login_window_title": "chatClient 登录",
+        "chat_window_title": "chatClient 聊天"
+    },
+    "services": {
+        "http": {
+            "base_url": "http://127.0.0.1:8848",
+            "register_path": "/api/v1/auth/register",
+            "login_path": "/api/v1/auth/login"
+        },
+        "ws": {
+            "url": "ws://127.0.0.1:8848/ws"
+        }
+    }
+}

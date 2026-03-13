@@ -12,6 +12,15 @@ QLabel#titleLabel {
 QLabel#subtitleLabel {
     color: #6f7782;
 }
+QLabel#registerStatusLabel[statusTone="info"] {
+    color: #1f6feb;
+}
+QLabel#registerStatusLabel[statusTone="success"] {
+    color: #0f9f5f;
+}
+QLabel#registerStatusLabel[statusTone="error"] {
+    color: #d13b3b;
+}
 
 /* 自定义标题栏与窗口控制按钮。 */
 QWidget#titleBar {

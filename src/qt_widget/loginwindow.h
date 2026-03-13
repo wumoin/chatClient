@@ -1,7 +1,8 @@
 #pragma once
 
+#include "dto/auth_dto.h"
+
 #include <QWidget>
-#include "chatwindow.h"
 
 class QCheckBox;
 class QLabel;
@@ -12,12 +13,26 @@ class QWidget;
 class QMouseEvent;
 class QPaintEvent;
 
+namespace chatclient::service {
+class AuthService;
+}
+
 // 登录窗口：使用 QWidget 作为顶层容器，负责组织登录界面的控件与布局。
 class LoginWindow : public QWidget
 {
     Q_OBJECT
 
 public:
+    /**
+     * @brief 注册页状态提示类型。
+     */
+    enum class RegisterStatusTone
+    {
+        kInfo,
+        kSuccess,
+        kError,
+    };
+
     /**
      * @brief 构造登录窗口并初始化登录/注册页面。
      * @param parent 父级 QWidget，可为空。
@@ -72,6 +87,34 @@ private:
      */
     QWidget *createRegisterPage();
 
+    /**
+     * @brief 提交注册表单。
+     */
+    void handleRegisterSubmit();
+    /**
+     * @brief 处理注册成功结果。
+     * @param user 服务端返回的新用户信息。
+     */
+    void handleRegisterSucceeded(
+        const chatclient::dto::auth::RegisterUserDto &user);
+    /**
+     * @brief 处理注册失败结果。
+     * @param message 可直接展示给用户的错误提示。
+     */
+    void handleRegisterFailed(const QString &message);
+    /**
+     * @brief 统一切换注册页控件的忙碌状态。
+     * @param submitting true 表示注册请求提交中；false 表示恢复可编辑。
+     */
+    void setRegisterSubmitting(bool submitting);
+    /**
+     * @brief 设置注册页状态提示文案和颜色。
+     * @param message 需要展示的状态文本；为空时隐藏提示。
+     * @param tone 当前提示语气，例如信息、成功或错误。
+     */
+    void setRegisterStatusMessage(const QString &message,
+                                  RegisterStatusTone tone);
+
     // 标题与副标题：用于提示当前所处流程。
     QLabel *m_titleLabel = nullptr;
     QLabel *m_subtitleLabel = nullptr;
@@ -95,16 +138,20 @@ private:
 
     // 注册页输入框：账号。
     QLineEdit *m_registerAccountEdit = nullptr;
+    // 注册页输入框：昵称。
+    QLineEdit *m_registerNicknameEdit = nullptr;
     // 注册页输入框：密码。
     QLineEdit *m_registerPasswordEdit = nullptr;
     // 注册页输入框：确认密码。
     QLineEdit *m_registerConfirmEdit = nullptr;
+    // 注册页状态提示：显示“注册中 / 成功 / 失败”等反馈。
+    QLabel *m_registerStatusLabel = nullptr;
     // 注册页主按钮：提交注册。
     QPushButton *m_registerSubmitButton = nullptr;
     // 注册页返回按钮：回到登录页。
     QPushButton *m_backToLoginButton = nullptr;
-    // 登录成功后打开聊天窗口。
-    ChatWindow *window = nullptr;
+    // 认证业务服务：负责注册请求校验与 HTTP 调用。
+    chatclient::service::AuthService *m_authService = nullptr;
 
     // 拖拽状态与偏移。
     bool m_dragging = false;

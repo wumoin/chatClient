@@ -1,5 +1,6 @@
 #include "chatwindow.h"
 
+#include "config/appconfig.h"
 #include "model/messagemodel.h"
 #include "model/messagemodelregistry.h"
 #include "view/messagelistview.h"
@@ -31,9 +32,11 @@ static QString loadChatStyleSheet()
 ChatWindow::ChatWindow(QWidget *parent)
     : QWidget(parent)
 {
+    const auto &config = chatclient::config::AppConfig::instance();
+
     // 用于 QSS 顶层选择器 QWidget#chatWindow。
     setObjectName(QStringLiteral("chatWindow"));
-    setWindowTitle(QStringLiteral("chatClient 聊天"));
+    setWindowTitle(config.chatWindowTitle());
     resize(1180, 760);
 
     // 根布局：左右两栏。
@@ -53,6 +56,8 @@ ChatWindow::ChatWindow(QWidget *parent)
 
 QWidget *ChatWindow::createSidebar()
 {
+    const auto &config = chatclient::config::AppConfig::instance();
+
     // 侧边栏容器：品牌色背景 + 圆角卡片。
     auto *sidebar = new QFrame(this);
     sidebar->setObjectName(QStringLiteral("sidebarPanel"));
@@ -65,6 +70,7 @@ QWidget *ChatWindow::createSidebar()
 
     // 顶部品牌文字。
     auto *brandLabel = new QLabel(QStringLiteral("CHATCLIENT"), sidebar);
+    brandLabel->setText(config.displayName().toUpper());
     brandLabel->setObjectName(QStringLiteral("brandLabel"));
 
     // 会话搜索框（仅 UI 展示，未接过滤逻辑）。
@@ -79,7 +85,8 @@ QWidget *ChatWindow::createSidebar()
     m_sessionList->setSelectionMode(QAbstractItemView::SingleSelection);
     m_sessionList->addItem(QStringLiteral("产品讨论组\n最后消息: 需求文档已更新"));
     m_sessionList->addItem(QStringLiteral("李华\n最后消息: 10 分钟后开会"));
-    m_sessionList->addItem(QStringLiteral("后端联调\n最后消息: /api/chat 已联通"));
+    m_sessionList->addItem(
+        QStringLiteral("后端联调\n服务地址: %1").arg(config.httpBaseUrlText()));
     m_sessionList->addItem(QStringLiteral("设计评审\n最后消息: 新版视觉已上传"));
     m_sessionList->setCurrentRow(0);
 
@@ -109,6 +116,8 @@ QWidget *ChatWindow::createSidebar()
 
 QWidget *ChatWindow::createChatPanel()
 {
+    const auto &config = chatclient::config::AppConfig::instance();
+
     // 右侧聊天主体卡片。
     auto *panel = new QFrame(this);
     panel->setObjectName(QStringLiteral("chatPanel"));
@@ -127,7 +136,9 @@ QWidget *ChatWindow::createChatPanel()
 
     auto *conversationTitle = new QLabel(QStringLiteral("产品讨论组"), header);
     conversationTitle->setObjectName(QStringLiteral("conversationTitle"));
-    auto *conversationMeta = new QLabel(QStringLiteral("14 人在线"), header);
+    auto *conversationMeta =
+        new QLabel(QStringLiteral("HTTP: %1").arg(config.httpBaseUrlText()),
+                   header);
     conversationMeta->setObjectName(QStringLiteral("conversationMeta"));
     auto *titleBlock = new QWidget(header);
     auto *titleLayout = new QVBoxLayout(titleBlock);

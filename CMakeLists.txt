@@ -14,9 +14,10 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# 同时支持 Qt6 与 Qt5
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+# 同时支持 Qt6 与 Qt5。
+# 当前除了 Widgets，还需要 Network 来承接注册接口请求。
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
 
 
 # 应用目标（收集 src 目录下所有文件）
@@ -43,14 +44,21 @@ endforeach()
 list(REMOVE_DUPLICATES CHATCLIENT_INCLUDE_DIRS)
 target_include_directories(chatClient PRIVATE ${CHATCLIENT_INCLUDE_DIRS})
 
+# 开发阶段统一从源码树读取客户端配置文件。
+# 这里把默认配置文件的绝对路径编译进程序，避免从不同工作目录启动时找不到配置。
+target_compile_definitions(
+    chatClient
+    PRIVATE CHATCLIENT_DEFAULT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/app.json")
+
 # Windows 常用宏：避免 min/max 宏污染、减少 Windows.h 头文件污染（可选但推荐）
 if (WIN32)
     target_compile_definitions(chatClient PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 
-# 链接 Qt Widgets
+# 链接 Qt Widgets 和 Qt Network。
 target_link_libraries(chatClient PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Network
 )
 
 if (WIN32)
