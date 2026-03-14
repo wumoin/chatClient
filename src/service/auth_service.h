@@ -54,6 +54,20 @@ public:
                    QString *errorMessage = nullptr);
 
     /**
+     * @brief 发起当前本地会话的登出流程。
+     * @param errorMessage 本地校验失败时写入错误消息，可为空。
+     * @return true 表示请求已发出或已按本地幂等完成；false 表示已有请求在进行中。
+     */
+    bool logoutUser(QString *errorMessage = nullptr);
+
+    /**
+     * @brief 以同步方式发起登出请求并清理本地登录态。
+     * @param errorMessage 服务端登出失败时写入提示，可为空。
+     * @return true 表示服务端确认登出或 token 已失效；false 表示仅完成本地清理。
+     */
+    bool logoutUserBlocking(QString *errorMessage = nullptr);
+
+    /**
      * @brief 判断当前是否正在提交注册请求。
      * @return true 表示注册请求仍在进行中；false 表示当前空闲。
      */
@@ -64,6 +78,12 @@ public:
      * @return true 表示登录请求仍在进行中；false 表示当前空闲。
      */
     bool isLoggingIn() const;
+
+    /**
+     * @brief 判断当前是否正在提交登出请求。
+     * @return true 表示登出请求仍在进行中；false 表示当前空闲。
+     */
+    bool isLoggingOut() const;
 
     /**
      * @brief 判断当前是否已持有本地登录态。
@@ -111,6 +131,22 @@ signals:
      * @param message 适合直接展示给用户的错误提示。
      */
     void loginFailed(const QString &message);
+
+    /**
+     * @brief 登出请求已开始提交。
+     */
+    void logoutStarted();
+
+    /**
+     * @brief 登出成功。
+     */
+    void logoutSucceeded();
+
+    /**
+     * @brief 登出失败。
+     * @param message 适合直接展示给用户的错误提示。
+     */
+    void logoutFailed(const QString &message);
 
 private:
     /**
@@ -168,6 +204,11 @@ private:
     void persistSession(const chatclient::dto::auth::LoginSessionDto &session);
 
     /**
+     * @brief 清理当前本地登录态。
+     */
+    void clearPersistedSession();
+
+    /**
      * @brief 从本地持久化介质恢复登录态。
      */
     void restoreSession();
@@ -175,6 +216,7 @@ private:
     chatclient::api::AuthApiClient m_authApiClient;
     bool m_registering = false;
     bool m_loggingIn = false;
+    bool m_loggingOut = false;
     bool m_hasActiveSession = false;
     chatclient::dto::auth::LoginSessionDto m_currentSession;
 };

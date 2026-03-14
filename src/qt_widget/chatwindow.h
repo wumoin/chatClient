@@ -3,24 +3,30 @@
 #include <QString>
 #include <QWidget>
 
-class QLineEdit;
+class QCloseEvent;
 class QLabel;
+class QLineEdit;
 class QListWidget;
+class QPushButton;
+class QStackedWidget;
 class QTextEdit;
 class MessageListView;
 class MessageModelRegistry;
 
-// ChatWindow 仅承担“界面展示”职责：
-// 1) 构建聊天页面布局（会话列表、消息区、输入区）。
-// 2) 为关键控件设置 objectName，交给 chatwindow.qss 统一控制样式。
-// 3) 提供静态示例数据，便于前期联调视觉与交互。
+// ChatWindow 当前承担“聊天主界面骨架”职责：
+// 1) 构建左侧导航栏、中间列表栏、右侧详情区三段式布局；
+// 2) 提供“消息 / 好友”两种主模式切换；
+// 3) 保留现有消息演示链路，并为后续好友能力预留独立入口。
 //
-// 注意：这里不处理网络通信、消息收发、数据持久化等业务逻辑。
+// 注意：
+// - 这里仍然不处理真实网络请求；
+// - 会话列表当前继续使用 QListWidget；
+// - “添加好友”当前只完成独立弹窗骨架，业务提交后续再接 service。
 class ChatWindow : public QWidget
 {
     Q_OBJECT
 
-public:
+  public:
     /**
      * @brief 构造聊天窗口并完成主界面初始化。
      * @param parent 父级 QWidget，可为空。
@@ -35,18 +41,104 @@ public:
     void setCurrentUserProfile(const QString &displayName,
                                const QString &statusText);
 
-private:
     /**
-     * @brief 创建左侧会话导航栏。
-     * @return 左侧导航栏容器指针。
+     * @brief 切换左侧账号动作按钮的忙碌状态。
+     * @param submitting true 表示账号动作提交中；false 表示恢复可点击。
+     * @param quitting true 表示当前执行“登出并退出程序”；false 表示执行“切换账号”。
      */
-    QWidget *createSidebar();
+    void setSessionActionSubmitting(bool submitting, bool quitting);
 
     /**
-     * @brief 创建右侧聊天主面板。
-     * @return 右侧主面板容器指针。
+     * @brief 允许窗口在应用退出路径中直接关闭。
      */
-    QWidget *createChatPanel();
+    void allowWindowClose();
+
+  signals:
+    /**
+     * @brief 用户点击左侧导航栏中的“切换账号”按钮。
+     */
+    void switchAccountRequested();
+
+    /**
+     * @brief 用户发起“登出并退出程序”动作。
+     */
+    void signOutRequested();
+
+  private:
+    /**
+     * @brief 拦截窗口关闭动作，并转成“登出并退出程序”请求。
+     * @param event 关闭事件对象。
+     */
+    void closeEvent(QCloseEvent *event) override;
+
+    enum class SidebarSection
+    {
+        kMessages = 0,
+        kFriends = 1,
+    };
+
+    /**
+     * @brief 创建左侧主导航栏。
+     * @return 左侧导航栏容器指针。
+     */
+    QWidget *createNavigationRail();
+
+    /**
+     * @brief 创建中间列表栏容器。
+     * @return 中间列表栏容器指针。
+     */
+    QWidget *createMiddlePanel();
+
+    /**
+     * @brief 创建“消息”模式下的中间列表页。
+     * @return 消息列表页容器指针。
+     */
+    QWidget *createMessagesPage();
+
+    /**
+     * @brief 创建“好友”模式下的中间列表页。
+     * @return 好友列表页容器指针。
+     */
+    QWidget *createFriendsPage();
+
+    /**
+     * @brief 创建“消息”模式下的右侧聊天详情页。
+     * @return 聊天详情页容器指针。
+     */
+    QWidget *createMessageContentPage();
+
+    /**
+     * @brief 创建“好友”模式下的右侧详情页。
+     * @return 好友详情页容器指针。
+     */
+    QWidget *createFriendContentPage();
+
+    /**
+     * @brief 切换左侧导航对应的主模式。
+     * @param section 目标模式。
+     */
+    void switchSection(SidebarSection section);
+
+    /**
+     * @brief 响应当前会话项切换，并更新右侧聊天详情。
+     */
+    void handleSessionSelectionChanged();
+
+    /**
+     * @brief 响应当前好友项切换，并更新右侧好友详情。
+     */
+    void handleFriendSelectionChanged();
+
+    /**
+     * @brief 打开“添加好友”独立弹窗。
+     */
+    void showAddFriendDialog();
+
+    /**
+     * @brief 根据当前展示名称更新左上角默认头像文本。
+     * @param displayName 当前登录用户展示名。
+     */
+    void updateProfileAvatar(const QString &displayName);
 
     /**
      * @brief 向当前会话追加一条文本消息并滚动到底部。
@@ -55,26 +147,45 @@ private:
      * @param fromSelf 是否为当前用户发送。
      */
     void appendMessage(const QString &author, const QString &text, bool fromSelf);
+
     /**
      * @brief 处理发送动作并将输入框内容写入当前会话。
      */
     void handleSendMessage();
 
-    // 左侧：会话搜索输入框。
-    QLineEdit *m_searchEdit = nullptr;
-    // 左侧：会话列表（当前为演示数据，后续可替换为模型/真实数据源）。
-    QListWidget *m_sessionList = nullptr;
+    SidebarSection m_currentSection{SidebarSection::kMessages};
 
-    // 右侧：消息列表视图（QListView + model + delegate）。
+    // 左侧导航栏：消息 / 好友两种主入口。
+    QLabel *m_navAvatarLabel = nullptr;
+    QPushButton *m_messagesNavButton = nullptr;
+    QPushButton *m_friendsNavButton = nullptr;
+    QPushButton *m_switchAccountNavButton = nullptr;
+    QPushButton *m_signOutNavButton = nullptr;
+
+    // 中间栏：根据左侧导航切换不同列表页。
+    QStackedWidget *m_middleStack = nullptr;
+    QLineEdit *m_messageSearchEdit = nullptr;
+    QLineEdit *m_friendSearchEdit = nullptr;
+    QListWidget *m_sessionList = nullptr;
+    QListWidget *m_friendList = nullptr;
+    QPushButton *m_addFriendButton = nullptr;
+
+    // 右侧内容区：消息详情页 / 好友详情页。
+    QStackedWidget *m_contentStack = nullptr;
+    QLabel *m_conversationTitleLabel = nullptr;
+    QLabel *m_conversationMetaLabel = nullptr;
+    QLabel *m_friendDetailTitleLabel = nullptr;
+    QLabel *m_friendDetailMetaLabel = nullptr;
+    QLabel *m_friendDetailHintLabel = nullptr;
+
+    // 消息页：仍然沿用现有 QListView + model + delegate 展示链路。
     MessageListView *m_messageListView = nullptr;
-    // 消息模型注册表：管理多会话 MessageModel。
     MessageModelRegistry *m_messageModelRegistry = nullptr;
-    // 当前聊天会话 id（用于选择注册表中的目标模型）。
     QString m_currentConversationId;
-    // 右侧：底部文本输入框。
     QTextEdit *m_messageEditor = nullptr;
-    // 左下角：当前登录用户展示名。
+
+    // 左下角：当前登录用户信息。
     QLabel *m_profileNameLabel = nullptr;
-    // 左下角：当前登录用户状态文本。
     QLabel *m_profileStatusLabel = nullptr;
+    bool m_allowClose = false;
 };

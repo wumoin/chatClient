@@ -247,6 +247,29 @@ bool parseLoginSuccessResponse(const QJsonObject &root,
     return true;
 }
 
+bool parseLogoutSuccessResponse(const QJsonObject &root,
+                                LogoutResponseDto *out,
+                                QString *errorMessage)
+{
+    if (root.value(QStringLiteral("code")).toInt(-1) != 0)
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("服务端返回了非成功业务码");
+        }
+        return false;
+    }
+
+    LogoutResponseDto parsedResponse;
+    parsedResponse.requestId = readOptionalString(root, QStringLiteral("request_id"));
+
+    if (out)
+    {
+        *out = parsedResponse;
+    }
+    return true;
+}
+
 ApiErrorDto parseApiErrorResponse(const QJsonObject &root,
                                   int httpStatus,
                                   const QString &fallbackMessage)

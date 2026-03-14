@@ -72,6 +72,12 @@ public:
     QUrl loginUrl() const;
 
     /**
+     * @brief 返回登出接口完整地址。
+     * @return 解析 `base_url + logout_path` 后得到的完整登出 URL。
+     */
+    QUrl logoutUrl() const;
+
+    /**
      * @brief 返回 WebSocket 服务地址。
      * @return WebSocket 完整 URL。
      */
@@ -198,6 +204,7 @@ private:
     QUrl httpBaseUrl_;
     QString registerPath_;
     QString loginPath_;
+    QString logoutPath_;
     QUrl webSocketUrl_;
     QString logAppName_;
     QString logMinimumLevel_ = QStringLiteral("INFO");

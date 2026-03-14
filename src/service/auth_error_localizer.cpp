@@ -70,6 +70,10 @@ QString localizeAuthError(const chatclient::dto::auth::ApiErrorDto &error)
     {
         return QStringLiteral("账号或密码错误");
     }
+    if (error.errorCode == 40102)
+    {
+        return QStringLiteral("登录态已失效，请重新登录");
+    }
     if (error.errorCode == 40902)
     {
         return QStringLiteral("当前设备已登录该账号");
@@ -108,6 +112,10 @@ QString localizeAuthError(const chatclient::dto::auth::ApiErrorDto &error)
     if (message == QStringLiteral("invalid credentials"))
     {
         return QStringLiteral("账号或密码错误");
+    }
+    if (message == QStringLiteral("invalid access token"))
+    {
+        return QStringLiteral("登录态已失效，请重新登录");
     }
     if (message == QStringLiteral("account disabled"))
     {

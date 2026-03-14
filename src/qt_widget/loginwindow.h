@@ -10,6 +10,7 @@ class QLineEdit;
 class QPushButton;
 class QStackedWidget;
 class QWidget;
+class QCloseEvent;
 class QMouseEvent;
 class QPaintEvent;
 class ChatWindow;
@@ -46,6 +47,11 @@ private:
      * @param event 绘制事件对象。
      */
     void paintEvent(QPaintEvent *event) override;
+    /**
+     * @brief 在应用退出时执行最后的登出清理。
+     * @param event 关闭事件对象。
+     */
+    void closeEvent(QCloseEvent *event) override;
     /**
      * @brief 处理鼠标按下事件并记录拖拽起点。
      * @param event 鼠标事件对象。
@@ -105,6 +111,25 @@ private:
     void handleLoginFailed(const QString &message);
 
     /**
+     * @brief 响应聊天页发起的切换账号动作。
+     */
+    void handleSwitchAccountRequested();
+    /**
+     * @brief 处理切换账号成功结果。
+     */
+    void handleSwitchAccountSucceeded();
+    /**
+     * @brief 处理切换账号失败结果。
+     * @param message 可直接展示给用户的错误提示。
+     */
+    void handleSwitchAccountFailed(const QString &message);
+
+    /**
+     * @brief 响应聊天页发起的“登出并退出程序”动作。
+     */
+    void handleSignOutRequested();
+
+    /**
      * @brief 提交注册表单。
      */
     void handleRegisterSubmit();
@@ -147,6 +172,15 @@ private:
      * @param session 当前登录会话。
      */
     void openChatWindow(const chatclient::dto::auth::LoginSessionDto &session);
+
+    /**
+     * @brief 在程序退出前同步向服务端发送登出请求。
+     * @param showConfirmation true 表示先弹确认框；false 表示静默执行。
+     * @param dialogParent 确认框的父窗口，可为空。
+     * @return true 表示允许继续退出；false 表示用户取消退出。
+     */
+    bool performApplicationExitLogout(bool showConfirmation,
+                                      QWidget *dialogParent = nullptr);
 
     // 标题与副标题：用于提示当前所处流程。
     QLabel *m_titleLabel = nullptr;
@@ -193,4 +227,5 @@ private:
     // 拖拽状态与偏移。
     bool m_dragging = false;
     QPoint m_dragOffset;
+    bool m_applicationShutdownInProgress = false;
 };

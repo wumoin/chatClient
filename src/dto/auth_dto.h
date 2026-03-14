@@ -100,6 +100,17 @@ struct LoginSessionDto
 };
 
 /**
+ * @brief 登出成功响应 DTO。
+ *
+ * 当前登出接口成功后只消费服务端回显的 `request_id`，
+ * 方便日志追踪和界面联调。
+ */
+struct LogoutResponseDto
+{
+    QString requestId;
+};
+
+/**
  * @brief 认证接口失败 DTO。
  *
  * 统一承接 HTTP 状态码、服务端业务码、错误消息和 `request_id`，
@@ -148,6 +159,17 @@ bool parseRegisterSuccessResponse(const QJsonObject &root,
 bool parseLoginSuccessResponse(const QJsonObject &root,
                                LoginResponseDto *out,
                                QString *errorMessage);
+
+/**
+ * @brief 解析服务端返回的登出成功响应。
+ * @param root 服务端响应根 JSON 对象。
+ * @param out 成功时写入解析后的登出响应 DTO。
+ * @param errorMessage 解析失败时写入原因，可为空。
+ * @return true 表示解析成功；false 表示响应结构不符合当前协议。
+ */
+bool parseLogoutSuccessResponse(const QJsonObject &root,
+                                LogoutResponseDto *out,
+                                QString *errorMessage);
 
 /**
  * @brief 解析认证接口失败响应。

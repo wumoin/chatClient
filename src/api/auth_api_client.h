@@ -30,6 +30,10 @@ public:
         std::function<void(const chatclient::dto::auth::LoginResponseDto &)>;
     using LoginFailureHandler =
         std::function<void(const chatclient::dto::auth::ApiErrorDto &)>;
+    using LogoutSuccessHandler =
+        std::function<void(const chatclient::dto::auth::LogoutResponseDto &)>;
+    using LogoutFailureHandler =
+        std::function<void(const chatclient::dto::auth::ApiErrorDto &)>;
 
     /**
      * @brief 构造认证接口客户端。
@@ -57,6 +61,27 @@ public:
                    LoginSuccessHandler onSuccess,
                    LoginFailureHandler onFailure);
 
+    /**
+     * @brief 发起登出请求。
+     * @param accessToken 当前登录会话的访问令牌。
+     * @param onSuccess 服务端返回成功响应时调用的回调。
+     * @param onFailure 请求失败、网络错误或响应解析失败时调用的回调。
+     */
+    void logoutUser(const QString &accessToken,
+                    LogoutSuccessHandler onSuccess,
+                    LogoutFailureHandler onFailure);
+
+    /**
+     * @brief 以同步方式发起登出请求。
+     * @param accessToken 当前登录会话的访问令牌。
+     * @param out 成功时写入解析后的登出响应 DTO，可为空。
+     * @param error 失败时写入统一错误 DTO，可为空。
+     * @return true 表示服务端已确认登出或当前 token 已失效；false 表示请求失败或超时。
+     */
+    bool logoutUserBlocking(const QString &accessToken,
+                            chatclient::dto::auth::LogoutResponseDto *out = nullptr,
+                            chatclient::dto::auth::ApiErrorDto *error = nullptr);
+
 private:
     /**
      * @brief 创建客户端本地 request_id。
@@ -72,6 +97,14 @@ private:
      */
     static void applyJsonHeaders(QNetworkRequest *request,
                                  const QString &requestId);
+
+    /**
+     * @brief 为需要认证的请求注入 Bearer Token。
+     * @param request 待发送的网络请求对象。
+     * @param accessToken 当前访问令牌。
+     */
+    static void applyAuthorizationHeader(QNetworkRequest *request,
+                                         const QString &accessToken);
 
     QNetworkAccessManager *m_networkAccessManager = nullptr;
 };

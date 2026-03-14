@@ -204,6 +204,125 @@ bool AuthService::loginUser(const QString &account,
     return true;
 }
 
+bool AuthService::logoutUser(QString *errorMessage)
+{
+    if (m_loggingOut)
+    {
+        CHATCLIENT_LOG_WARN("auth.service")
+            << "logout request ignored because another logout is still running";
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("正在退出登录，请稍候");
+        }
+        return false;
+    }
+
+    if (m_loggingIn || m_registering)
+    {
+        CHATCLIENT_LOG_WARN("auth.service")
+            << "logout request ignored because another auth request is still running";
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("当前仍有认证请求在处理中，请稍候");
+        }
+        return false;
+    }
+
+    if (!m_hasActiveSession || m_currentSession.accessToken.trimmed().isEmpty())
+    {
+        CHATCLIENT_LOG_INFO("auth.service")
+            << "logout requested without active session, clearing local state directly";
+        clearPersistedSession();
+        emit logoutSucceeded();
+        return true;
+    }
+
+    m_loggingOut = true;
+    emit logoutStarted();
+    CHATCLIENT_LOG_INFO("auth.service")
+        << "logout request started user_id="
+        << m_currentSession.user.userId
+        << " device_session_id="
+        << m_currentSession.deviceSessionId;
+
+    m_authApiClient.logoutUser(
+        m_currentSession.accessToken,
+        [this](const chatclient::dto::auth::LogoutResponseDto &response) {
+            m_loggingOut = false;
+            clearPersistedSession();
+            CHATCLIENT_LOG_INFO("auth.service")
+                << "logout request completed request_id="
+                << response.requestId;
+            emit logoutSucceeded();
+        },
+        [this](const chatclient::dto::auth::ApiErrorDto &error) {
+            m_loggingOut = false;
+            CHATCLIENT_LOG_WARN("auth.service")
+                << "logout request failed request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+
+            // access_token 已失效时，客户端本地会话也不再可用，直接视为已退出。
+            if (error.errorCode == 40102 || error.message.trimmed() == QStringLiteral("invalid access token"))
+            {
+                clearPersistedSession();
+                emit logoutSucceeded();
+                return;
+            }
+
+            const QString localizedMessage = localizeAuthError(error);
+            emit logoutFailed(localizedMessage.isEmpty()
+                                  ? QStringLiteral("退出登录失败，请稍后重试")
+                                  : localizedMessage);
+        });
+
+    return true;
+}
+
+bool AuthService::logoutUserBlocking(QString *errorMessage)
+{
+    if (m_hasActiveSession && !m_currentSession.accessToken.trimmed().isEmpty())
+    {
+        chatclient::dto::auth::ApiErrorDto error;
+        const bool ok = m_authApiClient.logoutUserBlocking(
+            m_currentSession.accessToken, nullptr, &error);
+        if (!ok)
+        {
+            CHATCLIENT_LOG_WARN("auth.service")
+                << "blocking logout request failed request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+
+            const bool tokenInvalid =
+                error.errorCode == 40102 ||
+                error.message.trimmed() == QStringLiteral("invalid access token");
+            if (!tokenInvalid && errorMessage)
+            {
+                const QString localizedMessage = localizeAuthError(error);
+                *errorMessage = localizedMessage.isEmpty()
+                                    ? QStringLiteral("退出登录失败")
+                                    : localizedMessage;
+            }
+
+            clearPersistedSession();
+            return tokenInvalid;
+        }
+    }
+
+    clearPersistedSession();
+    return true;
+}
+
 bool AuthService::isRegistering() const
 {
     return m_registering;
@@ -212,6 +331,11 @@ bool AuthService::isRegistering() const
 bool AuthService::isLoggingIn() const
 {
     return m_loggingIn;
+}
+
+bool AuthService::isLoggingOut() const
+{
+    return m_loggingOut;
 }
 
 bool AuthService::hasActiveSession() const
@@ -496,6 +620,21 @@ void AuthService::persistSession(
                       session.accessToken);
     settings.setValue(QString::fromLatin1(kSettingsExpiresInSecKey),
                       session.expiresInSec);
+}
+
+void AuthService::clearPersistedSession()
+{
+    m_currentSession = chatclient::dto::auth::LoginSessionDto();
+    m_hasActiveSession = false;
+
+    QSettings settings = authSettings();
+    settings.remove(QString::fromLatin1(kSettingsAccountKey));
+    settings.remove(QString::fromLatin1(kSettingsUserIdKey));
+    settings.remove(QString::fromLatin1(kSettingsNicknameKey));
+    settings.remove(QString::fromLatin1(kSettingsAvatarUrlKey));
+    settings.remove(QString::fromLatin1(kSettingsDeviceSessionIdKey));
+    settings.remove(QString::fromLatin1(kSettingsAccessTokenKey));
+    settings.remove(QString::fromLatin1(kSettingsExpiresInSecKey));
 }
 
 void AuthService::restoreSession()

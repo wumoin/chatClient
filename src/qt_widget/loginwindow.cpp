@@ -5,7 +5,9 @@
 #include "qt_widget/chatwindow.h"
 #include "service/auth_service.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QFile>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -106,6 +108,22 @@ LoginWindow::LoginWindow(QWidget *parent)
             this,
             &LoginWindow::handleLoginFailed);
     connect(m_authService,
+            &chatclient::service::AuthService::logoutStarted,
+            this,
+            [this]() {
+                if (m_chatWindow) {
+                    m_chatWindow->setSessionActionSubmitting(true, false);
+                }
+            });
+    connect(m_authService,
+            &chatclient::service::AuthService::logoutSucceeded,
+            this,
+            &LoginWindow::handleSwitchAccountSucceeded);
+    connect(m_authService,
+            &chatclient::service::AuthService::logoutFailed,
+            this,
+            &LoginWindow::handleSwitchAccountFailed);
+    connect(m_authService,
             &chatclient::service::AuthService::registerStarted,
             this,
             [this]() {
@@ -136,6 +154,22 @@ void LoginWindow::paintEvent(QPaintEvent *event)
     painter.setBrush(QColor(250, 251, 253));
     painter.setPen(QPen(QColor(220, 224, 230), 1.0));
     painter.drawRoundedRect(rect, radius, radius);
+}
+
+void LoginWindow::closeEvent(QCloseEvent *event)
+{
+    if (m_applicationShutdownInProgress)
+    {
+        QWidget::closeEvent(event);
+        return;
+    }
+
+    if (m_authService && m_authService->hasActiveSession())
+    {
+        performApplicationExitLogout(false, this);
+    }
+
+    QWidget::closeEvent(event);
 }
 
 void LoginWindow::mousePressEvent(QMouseEvent *event)
@@ -423,6 +457,97 @@ void LoginWindow::handleLoginFailed(const QString &message)
     setLoginStatusMessage(message, StatusTone::kError);
 }
 
+void LoginWindow::handleSwitchAccountRequested()
+{
+    if (!m_authService || m_authService->isLoggingOut()) {
+        return;
+    }
+
+    const auto answer = QMessageBox::question(
+        m_chatWindow != nullptr ? static_cast<QWidget *>(m_chatWindow)
+                                : static_cast<QWidget *>(this),
+        QStringLiteral("切换账号"),
+        QStringLiteral("确定要退出当前账号并切换到登录页吗？"));
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+
+    QString errorMessage;
+    if (!m_authService->logoutUser(&errorMessage)) {
+        if (m_chatWindow) {
+            m_chatWindow->setSessionActionSubmitting(false, false);
+        }
+        QMessageBox::warning(
+            m_chatWindow != nullptr ? static_cast<QWidget *>(m_chatWindow)
+                                    : static_cast<QWidget *>(this),
+            QStringLiteral("切换账号"),
+            errorMessage.isEmpty()
+                ? QStringLiteral("切换账号失败，请稍后重试。")
+                : errorMessage);
+    }
+}
+
+void LoginWindow::handleSwitchAccountSucceeded()
+{
+    CHATCLIENT_LOG_INFO("login.window") << "switch account succeeded";
+
+    if (m_chatWindow) {
+        m_chatWindow->setSessionActionSubmitting(false, false);
+        m_chatWindow->setCurrentUserProfile(QStringLiteral("访客"),
+                                            QStringLiteral("等待连接"));
+        m_chatWindow->hide();
+    }
+
+    showLoginPage();
+    setLoginStatusMessage(QStringLiteral("已退出当前账号，请重新登录"),
+                          StatusTone::kSuccess);
+    show();
+    raise();
+    activateWindow();
+}
+
+void LoginWindow::handleSwitchAccountFailed(const QString &message)
+{
+    CHATCLIENT_LOG_WARN("login.window")
+        << "switch account failed message="
+        << message;
+
+    if (m_chatWindow) {
+        if (m_authService && m_authService->hasActiveSession()) {
+            const auto &session = m_authService->currentSession();
+            const QString displayName = session.user.nickname.isEmpty()
+                                            ? session.account
+                                            : session.user.nickname;
+            const QString statusText =
+                QStringLiteral("已登录 · %1").arg(session.account);
+            m_chatWindow->setCurrentUserProfile(displayName, statusText);
+        }
+        m_chatWindow->setSessionActionSubmitting(false, false);
+        QMessageBox::warning(m_chatWindow,
+                             QStringLiteral("切换账号"),
+                             message.isEmpty()
+                                 ? QStringLiteral("切换账号失败，请稍后重试。")
+                                 : message);
+    }
+}
+
+void LoginWindow::handleSignOutRequested()
+{
+    if (!performApplicationExitLogout(true,
+                                      m_chatWindow != nullptr
+                                          ? static_cast<QWidget *>(m_chatWindow)
+                                          : static_cast<QWidget *>(this)))
+    {
+        return;
+    }
+
+    if (m_chatWindow) {
+        m_chatWindow->allowWindowClose();
+        m_chatWindow->close();
+    }
+    close();
+}
+
 void LoginWindow::handleRegisterSubmit()
 {
     if (!m_authService) {
@@ -598,6 +723,14 @@ void LoginWindow::openChatWindow(
 {
     if (!m_chatWindow) {
         m_chatWindow = new ChatWindow();
+        connect(m_chatWindow,
+                &ChatWindow::switchAccountRequested,
+                this,
+                &LoginWindow::handleSwitchAccountRequested);
+        connect(m_chatWindow,
+                &ChatWindow::signOutRequested,
+                this,
+                &LoginWindow::handleSignOutRequested);
     }
 
     const QString displayName = session.user.nickname.isEmpty()
@@ -606,8 +739,50 @@ void LoginWindow::openChatWindow(
     const QString statusText = QStringLiteral("已登录 · %1").arg(session.account);
 
     m_chatWindow->setCurrentUserProfile(displayName, statusText);
+    m_chatWindow->setSessionActionSubmitting(false, false);
     m_chatWindow->show();
     m_chatWindow->raise();
     m_chatWindow->activateWindow();
     hide();
+}
+
+bool LoginWindow::performApplicationExitLogout(bool showConfirmation,
+                                               QWidget *dialogParent)
+{
+    if (m_applicationShutdownInProgress)
+    {
+        return true;
+    }
+
+    if (showConfirmation)
+    {
+        const auto answer = QMessageBox::question(
+            dialogParent != nullptr ? dialogParent : this,
+            QStringLiteral("登出"),
+            QStringLiteral("确定要登出当前账号并退出程序吗？"));
+        if (answer != QMessageBox::Yes)
+        {
+            return false;
+        }
+    }
+
+    m_applicationShutdownInProgress = true;
+
+    if (m_chatWindow)
+    {
+        m_chatWindow->setSessionActionSubmitting(true, true);
+    }
+
+    QString errorMessage;
+    const bool remoteLoggedOut =
+        !m_authService || m_authService->logoutUserBlocking(&errorMessage);
+
+    if (!remoteLoggedOut)
+    {
+        CHATCLIENT_LOG_WARN("login.window")
+            << "application exit logout finished with local-only cleanup message="
+            << errorMessage;
+    }
+
+    return true;
 }

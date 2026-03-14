@@ -3,9 +3,11 @@
 #include "config/appconfig.h"
 #include "model/messagemodel.h"
 #include "model/messagemodelregistry.h"
+#include "qt_widget/addfrienddialog.h"
 #include "view/messagelistview.h"
 
 #include <QAbstractItemView>
+#include <QCloseEvent>
 #include <QFile>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -13,14 +15,25 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QListWidgetItem>
 #include <QPushButton>
 #include <QShortcut>
+#include <QStackedWidget>
 #include <QTextEdit>
 #include <QTime>
 #include <QTimer>
 #include <QVBoxLayout>
 
-static QString loadChatStyleSheet()
+namespace {
+
+constexpr int kConversationIdRole = Qt::UserRole + 1;
+constexpr int kConversationTitleRole = Qt::UserRole + 2;
+constexpr int kConversationMetaRole = Qt::UserRole + 3;
+constexpr int kFriendNameRole = Qt::UserRole + 4;
+constexpr int kFriendMetaRole = Qt::UserRole + 5;
+constexpr int kFriendHintRole = Qt::UserRole + 6;
+
+QString loadChatStyleSheet()
 {
     QFile file(QStringLiteral(":/chatwindow.qss"));
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -29,34 +42,83 @@ static QString loadChatStyleSheet()
     return QString::fromUtf8(file.readAll());
 }
 
+QListWidgetItem *createRichListItem(const QString &title,
+                                    const QString &subtitle,
+                                    QListWidget *parent)
+{
+    auto *item = new QListWidgetItem(QStringLiteral("%1\n%2").arg(title, subtitle),
+                                     parent);
+    item->setSizeHint(QSize(0, 64));
+    return item;
+}
+
+}  // namespace
+
 ChatWindow::ChatWindow(QWidget *parent)
     : QWidget(parent)
 {
     const auto &config = chatclient::config::AppConfig::instance();
 
-    // 用于 QSS 顶层选择器 QWidget#chatWindow。
+    // 聊天主界面当前改成三段式结构：
+    // 1) 左侧导航栏负责“消息 / 好友”模式切换；
+    // 2) 中间栏负责展示对应模式下的列表；
+    // 3) 右侧负责当前选中项的详细内容。
     setObjectName(QStringLiteral("chatWindow"));
     setWindowTitle(config.chatWindowTitle());
-    resize(1180, 760);
+    resize(1280, 800);
 
-    // 根布局：左右两栏。
-    // 左侧固定宽度用于会话导航，右侧自适应用于聊天主体。
     auto *rootLayout = new QHBoxLayout(this);
-    rootLayout->setContentsMargins(20, 20, 20, 20);
-    rootLayout->setSpacing(16);
+    rootLayout->setContentsMargins(18, 18, 18, 18);
+    rootLayout->setSpacing(14);
 
-    // stretch = 0: 左侧保持固定宽度
-    // stretch = 1: 右侧占据剩余空间
-    rootLayout->addWidget(createSidebar(), 0);
-    rootLayout->addWidget(createChatPanel(), 1);
+    rootLayout->addWidget(createNavigationRail(), 0);
+    rootLayout->addWidget(createMiddlePanel(), 0);
 
-    // 在所有子控件创建完后统一加载样式，确保选择器可以完整命中。
+    m_contentStack = new QStackedWidget(this);
+    m_contentStack->setObjectName(QStringLiteral("contentStack"));
+    m_contentStack->addWidget(createMessageContentPage());
+    m_contentStack->addWidget(createFriendContentPage());
+    rootLayout->addWidget(m_contentStack, 1);
+
     setStyleSheet(loadChatStyleSheet());
+
+    // 示例消息数据仍然在本地准备，方便当前继续联调 UI。
+    m_messageModelRegistry->addTextMessage(QStringLiteral("product_discussion"),
+                                           QStringLiteral("李华"),
+                                           QStringLiteral("首页改版需求已经更新到共享文档。"),
+                                           QStringLiteral("09:12"),
+                                           false);
+    m_messageModelRegistry->addTextMessage(QStringLiteral("product_discussion"),
+                                           QStringLiteral("我"),
+                                           QStringLiteral("收到，我今天把聊天页骨架一起整理出来。"),
+                                           QStringLiteral("09:14"),
+                                           true);
+    m_messageModelRegistry->addTextMessage(QStringLiteral("backend_sync"),
+                                           QStringLiteral("后端同学"),
+                                           QStringLiteral("登录、登出接口都已经通了，可以开始接客户端。"),
+                                           QStringLiteral("10:06"),
+                                           false);
+    m_messageModelRegistry->addTextMessage(QStringLiteral("backend_sync"),
+                                           QStringLiteral("我"),
+                                           QStringLiteral("好的，今天先把消息 / 好友两栏骨架切出来。"),
+                                           QStringLiteral("10:08"),
+                                           true);
+    m_messageModelRegistry->addTextMessage(QStringLiteral("design_review"),
+                                           QStringLiteral("设计师"),
+                                           QStringLiteral("导航栏方案建议固定成消息和好友两个主入口。"),
+                                           QStringLiteral("11:20"),
+                                           false);
+
+    switchSection(SidebarSection::kMessages);
+    handleSessionSelectionChanged();
+    handleFriendSelectionChanged();
 }
 
 void ChatWindow::setCurrentUserProfile(const QString &displayName,
                                        const QString &statusText)
 {
+    updateProfileAvatar(displayName);
+
     if (m_profileNameLabel)
     {
         m_profileNameLabel->setText(displayName);
@@ -68,100 +130,326 @@ void ChatWindow::setCurrentUserProfile(const QString &displayName,
     }
 }
 
-QWidget *ChatWindow::createSidebar()
+void ChatWindow::setSessionActionSubmitting(const bool submitting,
+                                            const bool quitting)
 {
-    const auto &config = chatclient::config::AppConfig::instance();
+    if (m_switchAccountNavButton)
+    {
+        m_switchAccountNavButton->setEnabled(!submitting);
+        m_switchAccountNavButton->setText(
+            submitting && !quitting ? QStringLiteral("切换中...")
+                                    : QStringLiteral("切换账号"));
+    }
 
-    // 侧边栏容器：品牌色背景 + 圆角卡片。
-    auto *sidebar = new QFrame(this);
-    sidebar->setObjectName(QStringLiteral("sidebarPanel"));
-    sidebar->setFixedWidth(320);
+    if (m_signOutNavButton)
+    {
+        m_signOutNavButton->setEnabled(!submitting);
+        m_signOutNavButton->setText(
+            submitting && quitting ? QStringLiteral("登出中...")
+                                   : QStringLiteral("登出"));
+    }
 
-    // 纵向区域：品牌 -> 搜索 -> 会话列表(可伸展) -> 个人信息。
-    auto *sidebarLayout = new QVBoxLayout(sidebar);
-    sidebarLayout->setContentsMargins(18, 18, 18, 18);
-    sidebarLayout->setSpacing(14);
+    if (m_profileStatusLabel && submitting)
+    {
+        m_profileStatusLabel->setText(quitting ? QStringLiteral("正在退出程序")
+                                               : QStringLiteral("正在切换账号"));
+    }
+}
 
-    // 顶部品牌文字。
-    auto *brandLabel = new QLabel(QStringLiteral("CHATCLIENT"), sidebar);
-    brandLabel->setText(config.displayName().toUpper());
-    brandLabel->setObjectName(QStringLiteral("brandLabel"));
+void ChatWindow::allowWindowClose()
+{
+    m_allowClose = true;
+}
 
-    // 会话搜索框（仅 UI 展示，未接过滤逻辑）。
-    m_searchEdit = new QLineEdit(sidebar);
-    m_searchEdit->setObjectName(QStringLiteral("sessionSearch"));
-    m_searchEdit->setPlaceholderText(QStringLiteral("搜索会话或联系人"));
+void ChatWindow::closeEvent(QCloseEvent *event)
+{
+    if (m_allowClose)
+    {
+        QWidget::closeEvent(event);
+        return;
+    }
 
-    // 会话列表（演示数据）：
-    // 每个 item 使用两行文本，模拟“会话名 + 最后一条消息摘要”。
-    m_sessionList = new QListWidget(sidebar);
-    m_sessionList->setObjectName(QStringLiteral("sessionList"));
-    m_sessionList->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_sessionList->addItem(QStringLiteral("产品讨论组\n最后消息: 需求文档已更新"));
-    m_sessionList->addItem(QStringLiteral("李华\n最后消息: 10 分钟后开会"));
-    m_sessionList->addItem(
-        QStringLiteral("后端联调\n服务地址: %1").arg(config.httpBaseUrlText()));
-    m_sessionList->addItem(QStringLiteral("设计评审\n最后消息: 新版视觉已上传"));
-    m_sessionList->setCurrentRow(0);
+    emit signOutRequested();
+    event->ignore();
+}
 
-    // 底部用户信息卡片。
-    auto *profileCard = new QFrame(sidebar);
-    profileCard->setObjectName(QStringLiteral("profileCard"));
+void ChatWindow::updateProfileAvatar(const QString &displayName)
+{
+    if (!m_navAvatarLabel)
+    {
+        return;
+    }
+
+    const QString trimmedName = displayName.trimmed();
+    if (trimmedName.isEmpty())
+    {
+        m_navAvatarLabel->setText(QStringLiteral("访客"));
+        m_navAvatarLabel->setToolTip(QString());
+        return;
+    }
+
+    // 左上角头像空间固定，因此默认头像使用用户名文本的前两个字符。
+    // 完整名字通过 tooltip 保留，避免导航栏顶部被长用户名撑坏。
+    const QString avatarText =
+        trimmedName.size() <= 2 ? trimmedName : trimmedName.left(2);
+    m_navAvatarLabel->setText(avatarText);
+    m_navAvatarLabel->setToolTip(trimmedName);
+}
+
+QWidget *ChatWindow::createNavigationRail()
+{
+    auto *rail = new QFrame(this);
+    rail->setObjectName(QStringLiteral("navigationRail"));
+    rail->setFixedWidth(108);
+
+    auto *railLayout = new QVBoxLayout(rail);
+    railLayout->setContentsMargins(12, 14, 12, 14);
+    railLayout->setSpacing(12);
+
+    m_navAvatarLabel = new QLabel(QStringLiteral("访客"), rail);
+    m_navAvatarLabel->setObjectName(QStringLiteral("navBrandBadge"));
+    m_navAvatarLabel->setAlignment(Qt::AlignCenter);
+    m_navAvatarLabel->setFixedSize(52, 52);
+
+    m_messagesNavButton = new QPushButton(QStringLiteral("消息"), rail);
+    m_messagesNavButton->setObjectName(QStringLiteral("navButton"));
+    m_messagesNavButton->setCheckable(true);
+
+    m_friendsNavButton = new QPushButton(QStringLiteral("好友"), rail);
+    m_friendsNavButton->setObjectName(QStringLiteral("navButton"));
+    m_friendsNavButton->setCheckable(true);
+
+    m_switchAccountNavButton = new QPushButton(QStringLiteral("切换账号"), rail);
+    m_switchAccountNavButton->setObjectName(QStringLiteral("navSecondaryButton"));
+
+    m_signOutNavButton = new QPushButton(QStringLiteral("登出"), rail);
+    m_signOutNavButton->setObjectName(QStringLiteral("navSecondaryButton"));
+
+    auto *navHint = new QLabel(QStringLiteral("主导航"), rail);
+    navHint->setObjectName(QStringLiteral("navHintLabel"));
+
+    auto *profileCard = new QFrame(rail);
+    profileCard->setObjectName(QStringLiteral("navProfileCard"));
     auto *profileLayout = new QVBoxLayout(profileCard);
-    profileLayout->setContentsMargins(12, 12, 12, 12);
-    profileLayout->setSpacing(4);
+    profileLayout->setContentsMargins(10, 10, 10, 10);
+    profileLayout->setSpacing(3);
 
     m_profileNameLabel = new QLabel(QStringLiteral("未登录"), profileCard);
     m_profileNameLabel->setObjectName(QStringLiteral("profileName"));
-    m_profileStatusLabel = new QLabel(QStringLiteral("等待登录"), profileCard);
+    m_profileStatusLabel = new QLabel(QStringLiteral("等待连接"), profileCard);
     m_profileStatusLabel->setObjectName(QStringLiteral("profileStatus"));
 
     profileLayout->addWidget(m_profileNameLabel);
     profileLayout->addWidget(m_profileStatusLabel);
 
-    // 列表区域设置 stretch=1，让其占据侧边栏的主要高度。
-    sidebarLayout->addWidget(brandLabel);
-    sidebarLayout->addWidget(m_searchEdit);
-    sidebarLayout->addWidget(m_sessionList, 1);
-    sidebarLayout->addWidget(profileCard);
+    railLayout->addWidget(m_navAvatarLabel, 0, Qt::AlignHCenter);
+    railLayout->addWidget(navHint, 0, Qt::AlignHCenter);
+    railLayout->addWidget(m_messagesNavButton);
+    railLayout->addWidget(m_friendsNavButton);
+    railLayout->addStretch(1);
+    railLayout->addWidget(m_switchAccountNavButton);
+    railLayout->addWidget(m_signOutNavButton);
+    railLayout->addWidget(profileCard);
 
-    return sidebar;
+    connect(m_messagesNavButton, &QPushButton::clicked, this, [this]() {
+        switchSection(SidebarSection::kMessages);
+    });
+    connect(m_friendsNavButton, &QPushButton::clicked, this, [this]() {
+        switchSection(SidebarSection::kFriends);
+    });
+    connect(m_switchAccountNavButton, &QPushButton::clicked, this, [this]() {
+        emit switchAccountRequested();
+    });
+    connect(m_signOutNavButton, &QPushButton::clicked, this, [this]() {
+        emit signOutRequested();
+    });
+
+    return rail;
 }
 
-QWidget *ChatWindow::createChatPanel()
+QWidget *ChatWindow::createMiddlePanel()
+{
+    auto *panel = new QFrame(this);
+    panel->setObjectName(QStringLiteral("listPanel"));
+    panel->setFixedWidth(340);
+
+    auto *panelLayout = new QVBoxLayout(panel);
+    panelLayout->setContentsMargins(0, 0, 0, 0);
+    panelLayout->setSpacing(0);
+
+    m_middleStack = new QStackedWidget(panel);
+    m_middleStack->setObjectName(QStringLiteral("middleStack"));
+    m_middleStack->addWidget(createMessagesPage());
+    m_middleStack->addWidget(createFriendsPage());
+
+    panelLayout->addWidget(m_middleStack);
+    return panel;
+}
+
+QWidget *ChatWindow::createMessagesPage()
+{
+    auto *page = new QWidget(m_middleStack);
+    page->setObjectName(QStringLiteral("listPage"));
+
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 18, 18, 18);
+    layout->setSpacing(12);
+
+    auto *titleLabel = new QLabel(QStringLiteral("消息"), page);
+    titleLabel->setObjectName(QStringLiteral("panelHeaderTitle"));
+    auto *subtitleLabel =
+        new QLabel(QStringLiteral("最近会话与未读消息"), page);
+    subtitleLabel->setObjectName(QStringLiteral("panelHeaderSubtitle"));
+
+    m_messageSearchEdit = new QLineEdit(page);
+    m_messageSearchEdit->setObjectName(QStringLiteral("panelSearch"));
+    m_messageSearchEdit->setPlaceholderText(QStringLiteral("搜索会话"));
+
+    m_sessionList = new QListWidget(page);
+    m_sessionList->setObjectName(QStringLiteral("entityList"));
+    m_sessionList->setSelectionMode(QAbstractItemView::SingleSelection);
+
+    auto *productDiscussion = createRichListItem(
+        QStringLiteral("产品讨论组"),
+        QStringLiteral("首页需求已更新"),
+        m_sessionList);
+    productDiscussion->setData(kConversationIdRole, QStringLiteral("product_discussion"));
+    productDiscussion->setData(kConversationTitleRole, QStringLiteral("产品讨论组"));
+    productDiscussion->setData(kConversationMetaRole,
+                               QStringLiteral("3 人在线 · 需求评审中"));
+
+    auto *backendSync = createRichListItem(
+        QStringLiteral("后端联调"),
+        QStringLiteral("登录和登出接口都已经打通"),
+        m_sessionList);
+    backendSync->setData(kConversationIdRole, QStringLiteral("backend_sync"));
+    backendSync->setData(kConversationTitleRole, QStringLiteral("后端联调"));
+    backendSync->setData(kConversationMetaRole,
+                         QStringLiteral("接口联调 · 设备会话验证"));
+
+    auto *designReview = createRichListItem(
+        QStringLiteral("设计评审"),
+        QStringLiteral("左导航和中间栏切换方案待确认"),
+        m_sessionList);
+    designReview->setData(kConversationIdRole, QStringLiteral("design_review"));
+    designReview->setData(kConversationTitleRole, QStringLiteral("设计评审"));
+    designReview->setData(kConversationMetaRole,
+                          QStringLiteral("视觉方案 · 等待反馈"));
+
+    m_sessionList->setCurrentRow(0);
+    connect(m_sessionList,
+            &QListWidget::currentItemChanged,
+            this,
+            [this](QListWidgetItem *, QListWidgetItem *) {
+                handleSessionSelectionChanged();
+            });
+
+    layout->addWidget(titleLabel);
+    layout->addWidget(subtitleLabel);
+    layout->addWidget(m_messageSearchEdit);
+    layout->addWidget(m_sessionList, 1);
+
+    return page;
+}
+
+QWidget *ChatWindow::createFriendsPage()
+{
+    auto *page = new QWidget(m_middleStack);
+    page->setObjectName(QStringLiteral("listPage"));
+
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 18, 18, 18);
+    layout->setSpacing(12);
+
+    auto *titleLabel = new QLabel(QStringLiteral("好友"), page);
+    titleLabel->setObjectName(QStringLiteral("panelHeaderTitle"));
+    auto *subtitleLabel =
+        new QLabel(QStringLiteral("联系人、好友申请与添加入口"), page);
+    subtitleLabel->setObjectName(QStringLiteral("panelHeaderSubtitle"));
+
+    m_friendSearchEdit = new QLineEdit(page);
+    m_friendSearchEdit->setObjectName(QStringLiteral("panelSearch"));
+    m_friendSearchEdit->setPlaceholderText(QStringLiteral("搜索好友"));
+
+    m_addFriendButton = new QPushButton(QStringLiteral("添加好友"), page);
+    m_addFriendButton->setObjectName(QStringLiteral("panelPrimaryButton"));
+    connect(m_addFriendButton, &QPushButton::clicked, this, &ChatWindow::showAddFriendDialog);
+
+    m_friendList = new QListWidget(page);
+    m_friendList->setObjectName(QStringLiteral("entityList"));
+    m_friendList->setSelectionMode(QAbstractItemView::SingleSelection);
+
+    auto *lihua = createRichListItem(QStringLiteral("李华"),
+                                     QStringLiteral("产品经理 · 已添加"),
+                                     m_friendList);
+    lihua->setData(kFriendNameRole, QStringLiteral("李华"));
+    lihua->setData(kFriendMetaRole, QStringLiteral("产品经理 · 上次活跃于 10:42"));
+    lihua->setData(kFriendHintRole,
+                   QStringLiteral("当前只是好友模式骨架，后续这里会接好友资料与发起会话能力。"));
+
+    auto *zhouning = createRichListItem(QStringLiteral("周宁"),
+                                        QStringLiteral("前端开发 · 已添加"),
+                                        m_friendList);
+    zhouning->setData(kFriendNameRole, QStringLiteral("周宁"));
+    zhouning->setData(kFriendMetaRole, QStringLiteral("前端开发 · 项目协作中"));
+    zhouning->setData(kFriendHintRole,
+                      QStringLiteral("后续这里可以补备注名、共同群组和发消息入口。"));
+
+    auto *newRequests = createRichListItem(QStringLiteral("新的朋友"),
+                                           QStringLiteral("1 条待处理申请"),
+                                           m_friendList);
+    newRequests->setData(kFriendNameRole, QStringLiteral("新的朋友"));
+    newRequests->setData(kFriendMetaRole, QStringLiteral("待处理申请 · 需要后续接真实接口"));
+    newRequests->setData(kFriendHintRole,
+                         QStringLiteral("这里后续会接好友申请列表、同意 / 拒绝等操作。"));
+
+    m_friendList->setCurrentRow(0);
+    connect(m_friendList,
+            &QListWidget::currentItemChanged,
+            this,
+            [this](QListWidgetItem *, QListWidgetItem *) {
+                handleFriendSelectionChanged();
+            });
+
+    layout->addWidget(titleLabel);
+    layout->addWidget(subtitleLabel);
+    layout->addWidget(m_friendSearchEdit);
+    layout->addWidget(m_addFriendButton);
+    layout->addWidget(m_friendList, 1);
+
+    return page;
+}
+
+QWidget *ChatWindow::createMessageContentPage()
 {
     const auto &config = chatclient::config::AppConfig::instance();
 
-    // 右侧聊天主体卡片。
     auto *panel = new QFrame(this);
-    panel->setObjectName(QStringLiteral("chatPanel"));
+    panel->setObjectName(QStringLiteral("contentPanel"));
 
-    // 垂直结构：header -> message area(可伸展) -> composer。
     auto *panelLayout = new QVBoxLayout(panel);
     panelLayout->setContentsMargins(20, 18, 20, 18);
     panelLayout->setSpacing(14);
 
-    // 顶栏：会话标题 + 在线状态 + 功能按钮。
     auto *header = new QFrame(panel);
-    header->setObjectName(QStringLiteral("chatHeader"));
+    header->setObjectName(QStringLiteral("contentHeader"));
     auto *headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(0, 0, 0, 0);
     headerLayout->setSpacing(10);
 
-    auto *conversationTitle = new QLabel(QStringLiteral("产品讨论组"), header);
-    conversationTitle->setObjectName(QStringLiteral("conversationTitle"));
-    auto *conversationMeta =
-        new QLabel(QStringLiteral("HTTP: %1").arg(config.httpBaseUrlText()),
-                   header);
-    conversationMeta->setObjectName(QStringLiteral("conversationMeta"));
+    m_conversationTitleLabel = new QLabel(QStringLiteral("产品讨论组"), header);
+    m_conversationTitleLabel->setObjectName(QStringLiteral("contentTitle"));
+    m_conversationMetaLabel =
+        new QLabel(QStringLiteral("3 人在线 · 需求评审中"), header);
+    m_conversationMetaLabel->setObjectName(QStringLiteral("contentMeta"));
+
     auto *titleBlock = new QWidget(header);
     auto *titleLayout = new QVBoxLayout(titleBlock);
     titleLayout->setContentsMargins(0, 0, 0, 0);
     titleLayout->setSpacing(2);
-    titleLayout->addWidget(conversationTitle);
-    titleLayout->addWidget(conversationMeta);
+    titleLayout->addWidget(m_conversationTitleLabel);
+    titleLayout->addWidget(m_conversationMetaLabel);
 
-    // 顶栏右侧按钮（仅展示按钮样式与布局，不绑定业务槽函数）。
     auto *voiceBtn = new QPushButton(QStringLiteral("语音"), header);
     voiceBtn->setObjectName(QStringLiteral("headerGhostButton"));
     auto *videoBtn = new QPushButton(QStringLiteral("视频"), header);
@@ -171,42 +459,28 @@ QWidget *ChatWindow::createChatPanel()
     headerLayout->addWidget(voiceBtn);
     headerLayout->addWidget(videoBtn);
 
-    // 消息区域：
-    // 使用 MessageListView，模型由 MessageModelRegistry 注入。
     m_messageListView = new MessageListView(panel);
     m_messageListView->setObjectName(QStringLiteral("messageListView"));
     m_messageModelRegistry = new MessageModelRegistry(this);
-    m_currentConversationId = QStringLiteral("product_discussion");
-    m_messageListView->setMessageModel(m_messageModelRegistry->ensureModel(m_currentConversationId));
-    m_messageModelRegistry->addTextMessage(m_currentConversationId,
-                                           QStringLiteral("李华"),
-                                           QStringLiteral("大家看下这版首页布局，今天定稿。"),
-                                           QStringLiteral("09:12"),
-                                           false);
-    m_messageModelRegistry->addTextMessage(m_currentConversationId,
-                                           QStringLiteral("我"),
-                                           QStringLiteral("收到，我这边会把组件拆分同步到前端仓库。"),
-                                           QStringLiteral("09:14"),
-                                           true);
-    m_messageModelRegistry->addTextMessage(m_currentConversationId,
-                                           QStringLiteral("产品经理"),
-                                           QStringLiteral("别忘了把移动端间距规范也补上。"),
-                                           QStringLiteral("09:15"),
-                                           false);
+    m_messageListView->setMessageModel(
+        m_messageModelRegistry->ensureModel(QStringLiteral("product_discussion")));
 
-    // 底部输入区：输入框 + 操作按钮。
     auto *composer = new QFrame(panel);
     composer->setObjectName(QStringLiteral("composerPanel"));
     auto *composerLayout = new QVBoxLayout(composer);
     composerLayout->setContentsMargins(12, 12, 12, 12);
     composerLayout->setSpacing(10);
 
+    auto *composerHint = new QLabel(
+        QStringLiteral("当前服务地址：%1").arg(config.httpBaseUrlText()),
+        composer);
+    composerHint->setObjectName(QStringLiteral("composerHintLabel"));
+
     m_messageEditor = new QTextEdit(composer);
     m_messageEditor->setObjectName(QStringLiteral("messageEditor"));
     m_messageEditor->setPlaceholderText(QStringLiteral("输入消息，按 Enter 发送，Shift+Enter 换行"));
     m_messageEditor->setMinimumHeight(110);
 
-    // 输入区按钮行：左侧辅助按钮，右侧主发送按钮。
     auto *actionRow = new QHBoxLayout();
     actionRow->setContentsMargins(0, 0, 0, 0);
     actionRow->setSpacing(8);
@@ -223,13 +497,11 @@ QWidget *ChatWindow::createChatPanel()
     actionRow->addStretch(1);
     actionRow->addWidget(sendBtn);
 
+    composerLayout->addWidget(composerHint);
     composerLayout->addWidget(m_messageEditor);
     composerLayout->addLayout(actionRow);
 
-    // 发送行为：
-    // 点击发送或按 Enter 提交消息；Shift+Enter 仍走 QTextEdit 默认换行逻辑。
     connect(sendBtn, &QPushButton::clicked, this, &ChatWindow::handleSendMessage);
-    // 这里使用 QShortcut 只拦截“单独 Enter”，不会覆盖 Shift+Enter 的默认换行。
     auto *returnShortcut = new QShortcut(QKeySequence(Qt::Key_Return), m_messageEditor);
     returnShortcut->setContext(Qt::WidgetShortcut);
     connect(returnShortcut, &QShortcut::activated, this, &ChatWindow::handleSendMessage);
@@ -237,7 +509,6 @@ QWidget *ChatWindow::createChatPanel()
     enterShortcut->setContext(Qt::WidgetShortcut);
     connect(enterShortcut, &QShortcut::activated, this, &ChatWindow::handleSendMessage);
 
-    // 消息列表设置 stretch=1，占用聊天主体大部分空间。
     panelLayout->addWidget(header);
     panelLayout->addWidget(m_messageListView, 1);
     panelLayout->addWidget(composer);
@@ -251,13 +522,171 @@ QWidget *ChatWindow::createChatPanel()
     return panel;
 }
 
-void ChatWindow::appendMessage(const QString &author, const QString &text, bool fromSelf)
+QWidget *ChatWindow::createFriendContentPage()
+{
+    auto *panel = new QFrame(this);
+    panel->setObjectName(QStringLiteral("contentPanel"));
+
+    auto *layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(24, 24, 24, 24);
+    layout->setSpacing(16);
+
+    auto *heroCard = new QFrame(panel);
+    heroCard->setObjectName(QStringLiteral("friendHeroCard"));
+    auto *heroLayout = new QVBoxLayout(heroCard);
+    heroLayout->setContentsMargins(18, 18, 18, 18);
+    heroLayout->setSpacing(6);
+
+    m_friendDetailTitleLabel = new QLabel(QStringLiteral("李华"), heroCard);
+    m_friendDetailTitleLabel->setObjectName(QStringLiteral("friendDetailTitle"));
+    m_friendDetailMetaLabel =
+        new QLabel(QStringLiteral("产品经理 · 上次活跃于 10:42"), heroCard);
+    m_friendDetailMetaLabel->setObjectName(QStringLiteral("friendDetailMeta"));
+    m_friendDetailHintLabel =
+        new QLabel(QStringLiteral("这里后续会接好友资料、申请处理和发起会话能力。"),
+                   heroCard);
+    m_friendDetailHintLabel->setObjectName(QStringLiteral("friendDetailHint"));
+    m_friendDetailHintLabel->setWordWrap(true);
+
+    heroLayout->addWidget(m_friendDetailTitleLabel);
+    heroLayout->addWidget(m_friendDetailMetaLabel);
+    heroLayout->addWidget(m_friendDetailHintLabel);
+
+    auto *actionRow = new QHBoxLayout();
+    actionRow->setContentsMargins(0, 0, 0, 0);
+    actionRow->setSpacing(10);
+
+    auto *startChatButton = new QPushButton(QStringLiteral("发起会话"), panel);
+    startChatButton->setObjectName(QStringLiteral("panelGhostButton"));
+    auto *viewProfileButton = new QPushButton(QStringLiteral("查看资料"), panel);
+    viewProfileButton->setObjectName(QStringLiteral("panelGhostButton"));
+
+    actionRow->addWidget(startChatButton);
+    actionRow->addWidget(viewProfileButton);
+    actionRow->addStretch(1);
+
+    auto *placeholderCard = new QFrame(panel);
+    placeholderCard->setObjectName(QStringLiteral("friendPlaceholderCard"));
+    auto *placeholderLayout = new QVBoxLayout(placeholderCard);
+    placeholderLayout->setContentsMargins(18, 18, 18, 18);
+    placeholderLayout->setSpacing(6);
+
+    auto *placeholderTitle = new QLabel(QStringLiteral("好友模式"), placeholderCard);
+    placeholderTitle->setObjectName(QStringLiteral("friendPlaceholderTitle"));
+    auto *placeholderBody = new QLabel(
+        QStringLiteral("当前已经完成左侧导航切换、中间栏切换和“添加好友”独立弹窗骨架。后续这里会继续接好友资料、申请列表和发消息入口。"),
+        placeholderCard);
+    placeholderBody->setObjectName(QStringLiteral("friendPlaceholderBody"));
+    placeholderBody->setWordWrap(true);
+
+    placeholderLayout->addWidget(placeholderTitle);
+    placeholderLayout->addWidget(placeholderBody);
+
+    layout->addWidget(heroCard);
+    layout->addLayout(actionRow);
+    layout->addWidget(placeholderCard);
+    layout->addStretch(1);
+
+    return panel;
+}
+
+void ChatWindow::switchSection(const SidebarSection section)
+{
+    m_currentSection = section;
+
+    const bool showMessages = section == SidebarSection::kMessages;
+    if (m_messagesNavButton) {
+        m_messagesNavButton->setChecked(showMessages);
+    }
+    if (m_friendsNavButton) {
+        m_friendsNavButton->setChecked(!showMessages);
+    }
+
+    if (m_middleStack) {
+        m_middleStack->setCurrentIndex(showMessages ? 0 : 1);
+    }
+    if (m_contentStack) {
+        m_contentStack->setCurrentIndex(showMessages ? 0 : 1);
+    }
+
+    if (showMessages) {
+        handleSessionSelectionChanged();
+    } else {
+        handleFriendSelectionChanged();
+    }
+}
+
+void ChatWindow::handleSessionSelectionChanged()
+{
+    if (!m_sessionList) {
+        return;
+    }
+
+    auto *item = m_sessionList->currentItem();
+    if (item == nullptr) {
+        return;
+    }
+
+    m_currentConversationId = item->data(kConversationIdRole).toString();
+    if (m_currentConversationId.isEmpty()) {
+        return;
+    }
+
+    if (m_conversationTitleLabel) {
+        m_conversationTitleLabel->setText(
+            item->data(kConversationTitleRole).toString());
+    }
+    if (m_conversationMetaLabel) {
+        m_conversationMetaLabel->setText(
+            item->data(kConversationMetaRole).toString());
+    }
+
+    if (m_messageModelRegistry && m_messageListView) {
+        m_messageListView->setMessageModel(
+            m_messageModelRegistry->ensureModel(m_currentConversationId));
+        m_messageListView->scrollToBottom();
+    }
+}
+
+void ChatWindow::handleFriendSelectionChanged()
+{
+    if (!m_friendList) {
+        return;
+    }
+
+    auto *item = m_friendList->currentItem();
+    if (item == nullptr) {
+        return;
+    }
+
+    if (m_friendDetailTitleLabel) {
+        m_friendDetailTitleLabel->setText(
+            item->data(kFriendNameRole).toString());
+    }
+    if (m_friendDetailMetaLabel) {
+        m_friendDetailMetaLabel->setText(
+            item->data(kFriendMetaRole).toString());
+    }
+    if (m_friendDetailHintLabel) {
+        m_friendDetailHintLabel->setText(
+            item->data(kFriendHintRole).toString());
+    }
+}
+
+void ChatWindow::showAddFriendDialog()
+{
+    AddFriendDialog dialog(this);
+    dialog.exec();
+}
+
+void ChatWindow::appendMessage(const QString &author,
+                               const QString &text,
+                               const bool fromSelf)
 {
     if (!m_messageListView || !m_messageModelRegistry || m_currentConversationId.isEmpty()) {
         return;
     }
 
-    // 时间在 UI 层统一格式化，后续接入服务端时间时可在此改成时间戳转换。
     m_messageModelRegistry->addTextMessage(m_currentConversationId,
                                            author,
                                            text,
@@ -268,12 +697,11 @@ void ChatWindow::appendMessage(const QString &author, const QString &text, bool 
 
 void ChatWindow::handleSendMessage()
 {
-    if (!m_messageEditor) {
+    if (!m_messageEditor || m_currentSection != SidebarSection::kMessages) {
         return;
     }
 
     const QString text = m_messageEditor->toPlainText().trimmed();
-    // 过滤纯空白输入，避免插入空气泡。
     if (text.isEmpty()) {
         return;
     }

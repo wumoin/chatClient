@@ -8,7 +8,8 @@
         "http": {
             "base_url": "http://127.0.0.1:8848",
             "register_path": "/api/v1/auth/register",
-            "login_path": "/api/v1/auth/login"
+            "login_path": "/api/v1/auth/login",
+            "logout_path": "/api/v1/auth/logout"
         },
         "ws": {
             "url": "ws://127.0.0.1:8848/ws"

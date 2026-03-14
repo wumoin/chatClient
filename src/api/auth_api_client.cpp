@@ -3,12 +3,14 @@
 #include "config/appconfig.h"
 #include "log/app_logger.h"
 
+#include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QTimer>
 #include <QUuid>
 
 namespace chatclient::api {
@@ -308,6 +310,259 @@ void AuthApiClient::loginUser(
             });
 }
 
+void AuthApiClient::logoutUser(const QString &accessToken,
+                               LogoutSuccessHandler onSuccess,
+                               LogoutFailureHandler onFailure)
+{
+    const QString requestId = createRequestId(QStringLiteral("logout"));
+    const QUrl logoutUrl = chatclient::config::AppConfig::instance().logoutUrl();
+
+    CHATCLIENT_LOG_INFO("auth.api")
+        << "sending logout request request_id="
+        << requestId
+        << " url="
+        << logoutUrl.toString();
+
+    QNetworkRequest networkRequest(logoutUrl);
+    applyJsonHeaders(&networkRequest, requestId);
+    applyAuthorizationHeader(&networkRequest, accessToken);
+
+    QNetworkReply *reply = m_networkAccessManager->post(networkRequest, QByteArray());
+
+    connect(reply,
+            &QNetworkReply::finished,
+            this,
+            [reply,
+             requestId,
+             onSuccess = std::move(onSuccess),
+             onFailure = std::move(onFailure)]() mutable {
+                const int httpStatus =
+                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+                        .toInt();
+                const QByteArray responseBody = reply->readAll();
+                const QString fallbackMessage =
+                    reply->error() == QNetworkReply::NoError
+                        ? QStringLiteral("服务端返回了无法识别的登出响应")
+                        : reply->errorString();
+
+                QJsonParseError parseError;
+                const QJsonDocument document =
+                    QJsonDocument::fromJson(responseBody, &parseError);
+                const bool hasJsonObject =
+                    parseError.error == QJsonParseError::NoError && document.isObject();
+
+                if (httpStatus >= 200 && httpStatus < 300 && hasJsonObject)
+                {
+                    chatclient::dto::auth::LogoutResponseDto response;
+                    QString errorMessage;
+                    if (chatclient::dto::auth::parseLogoutSuccessResponse(
+                            document.object(), &response, &errorMessage))
+                    {
+                        if (response.requestId.isEmpty())
+                        {
+                            response.requestId = requestId;
+                        }
+
+                        CHATCLIENT_LOG_INFO("auth.api")
+                            << "logout request succeeded request_id="
+                            << response.requestId
+                            << " http_status="
+                            << httpStatus;
+
+                        if (onSuccess)
+                        {
+                            onSuccess(response);
+                        }
+
+                        reply->deleteLater();
+                        return;
+                    }
+
+                    if (onFailure)
+                    {
+                        chatclient::dto::auth::ApiErrorDto error;
+                        error.httpStatus = httpStatus;
+                        error.errorCode = 50000;
+                        error.requestId = requestId;
+                        error.message = errorMessage.isEmpty()
+                                            ? fallbackMessage
+                                            : errorMessage;
+                        CHATCLIENT_LOG_ERROR("auth.api")
+                            << "logout success response parse failed request_id="
+                            << requestId
+                            << " http_status="
+                            << httpStatus
+                            << " error="
+                            << error.message;
+                        onFailure(error);
+                    }
+
+                    reply->deleteLater();
+                    return;
+                }
+
+                if (onFailure)
+                {
+                    if (hasJsonObject)
+                    {
+                        auto error = chatclient::dto::auth::parseApiErrorResponse(
+                            document.object(), httpStatus, fallbackMessage);
+                        if (error.requestId.isEmpty())
+                        {
+                            error.requestId = requestId;
+                        }
+                        CHATCLIENT_LOG_WARN("auth.api")
+                            << "logout request failed request_id="
+                            << error.requestId
+                            << " http_status="
+                            << httpStatus
+                            << " error_code="
+                            << error.errorCode
+                            << " message="
+                            << error.message;
+                        onFailure(error);
+                    }
+                    else
+                    {
+                        chatclient::dto::auth::ApiErrorDto error;
+                        error.httpStatus = httpStatus;
+                        error.requestId = requestId;
+                        error.message = fallbackMessage;
+                        CHATCLIENT_LOG_WARN("auth.api")
+                            << "logout request returned non-json response request_id="
+                            << requestId
+                            << " http_status="
+                            << httpStatus
+                            << " message="
+                            << error.message;
+                        onFailure(error);
+                    }
+                }
+
+                reply->deleteLater();
+            });
+}
+
+bool AuthApiClient::logoutUserBlocking(
+    const QString &accessToken,
+    chatclient::dto::auth::LogoutResponseDto *out,
+    chatclient::dto::auth::ApiErrorDto *error)
+{
+    const QString requestId = createRequestId(QStringLiteral("logout"));
+    const QUrl logoutUrl = chatclient::config::AppConfig::instance().logoutUrl();
+
+    CHATCLIENT_LOG_INFO("auth.api")
+        << "sending blocking logout request request_id="
+        << requestId
+        << " url="
+        << logoutUrl.toString();
+
+    QNetworkRequest networkRequest(logoutUrl);
+    applyJsonHeaders(&networkRequest, requestId);
+    applyAuthorizationHeader(&networkRequest, accessToken);
+
+    QNetworkReply *reply = m_networkAccessManager->post(networkRequest, QByteArray());
+
+    QEventLoop eventLoop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+
+    bool finished = false;
+    connect(reply, &QNetworkReply::finished, &eventLoop, [&]() {
+        finished = true;
+        eventLoop.quit();
+    });
+    connect(&timeoutTimer, &QTimer::timeout, &eventLoop, &QEventLoop::quit);
+    timeoutTimer.start(2500);
+    eventLoop.exec();
+
+    if (!finished)
+    {
+        reply->abort();
+        if (error)
+        {
+            error->httpStatus = 0;
+            error->errorCode = 50000;
+            error->requestId = requestId;
+            error->message = QStringLiteral("登出请求超时");
+        }
+        CHATCLIENT_LOG_WARN("auth.api")
+            << "blocking logout request timed out request_id="
+            << requestId;
+        reply->deleteLater();
+        return false;
+    }
+
+    const int httpStatus =
+        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QByteArray responseBody = reply->readAll();
+    const QString fallbackMessage =
+        reply->error() == QNetworkReply::NoError
+            ? QStringLiteral("服务端返回了无法识别的登出响应")
+            : reply->errorString();
+
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(responseBody, &parseError);
+    const bool hasJsonObject =
+        parseError.error == QJsonParseError::NoError && document.isObject();
+
+    if (httpStatus >= 200 && httpStatus < 300 && hasJsonObject)
+    {
+        chatclient::dto::auth::LogoutResponseDto response;
+        QString errorMessage;
+        if (chatclient::dto::auth::parseLogoutSuccessResponse(
+                document.object(), &response, &errorMessage))
+        {
+            if (response.requestId.isEmpty())
+            {
+                response.requestId = requestId;
+            }
+            if (out)
+            {
+                *out = response;
+            }
+            reply->deleteLater();
+            return true;
+        }
+
+        if (error)
+        {
+            error->httpStatus = httpStatus;
+            error->errorCode = 50000;
+            error->requestId = requestId;
+            error->message = errorMessage.isEmpty() ? fallbackMessage : errorMessage;
+        }
+        reply->deleteLater();
+        return false;
+    }
+
+    chatclient::dto::auth::ApiErrorDto parsedError;
+    if (hasJsonObject)
+    {
+        parsedError = chatclient::dto::auth::parseApiErrorResponse(
+            document.object(), httpStatus, fallbackMessage);
+    }
+    else
+    {
+        parsedError.httpStatus = httpStatus;
+        parsedError.message = fallbackMessage;
+    }
+
+    if (parsedError.requestId.isEmpty())
+    {
+        parsedError.requestId = requestId;
+    }
+
+    if (error)
+    {
+        *error = parsedError;
+    }
+
+    reply->deleteLater();
+    return false;
+}
+
 QString AuthApiClient::createRequestId(const QString &action)
 {
     return QStringLiteral("req_client_%1_%2")
@@ -327,6 +582,19 @@ void AuthApiClient::applyJsonHeaders(QNetworkRequest *request,
                        QStringLiteral("application/json"));
     request->setRawHeader("Accept", "application/json");
     request->setRawHeader("X-Request-Id", requestId.toUtf8());
+}
+
+void AuthApiClient::applyAuthorizationHeader(QNetworkRequest *request,
+                                             const QString &accessToken)
+{
+    if (!request || accessToken.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    request->setRawHeader(
+        "Authorization",
+        QStringLiteral("Bearer %1").arg(accessToken.trimmed()).toUtf8());
 }
 
 }  // namespace chatclient::api

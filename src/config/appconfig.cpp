@@ -72,6 +72,11 @@ QUrl AppConfig::loginUrl() const
     return httpBaseUrl_.resolved(QUrl(loginPath_));
 }
 
+QUrl AppConfig::logoutUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(logoutPath_));
+}
+
 const QUrl &AppConfig::webSocketUrl() const
 {
     return webSocketUrl_;
@@ -223,6 +228,10 @@ bool AppConfig::load(QString *errorMessage)
                             QStringLiteral("login_path"),
                             &loginPath_,
                             errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("logout_path"),
+                            &logoutPath_,
+                            errorMessage) ||
         !readRequiredString(wsValue.toObject(),
                             QStringLiteral("url"),
                             &webSocketUrlText,
@@ -312,12 +321,14 @@ bool AppConfig::load(QString *errorMessage)
     }
 
     if (!registerPath_.startsWith(QLatin1Char('/')) ||
-        !loginPath_.startsWith(QLatin1Char('/')))
+        !loginPath_.startsWith(QLatin1Char('/')) ||
+        !logoutPath_.startsWith(QLatin1Char('/')))
     {
         if (errorMessage)
         {
             *errorMessage =
-                QStringLiteral("register_path 和 login_path 必须以 / 开头");
+                QStringLiteral(
+                    "register_path、login_path 和 logout_path 必须以 / 开头");
         }
         return false;
     }
