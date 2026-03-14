@@ -24,7 +24,7 @@ void AuthApiClient::registerUser(
     RegisterSuccessHandler onSuccess,
     RegisterFailureHandler onFailure)
 {
-    const QString requestId = createRequestId();
+    const QString requestId = createRequestId(QStringLiteral("register"));
     const QUrl registerUrl = chatclient::config::AppConfig::instance().registerUrl();
 
     CHATCLIENT_LOG_INFO("auth.api")
@@ -163,10 +163,156 @@ void AuthApiClient::registerUser(
             });
 }
 
-QString AuthApiClient::createRequestId()
+void AuthApiClient::loginUser(
+    const chatclient::dto::auth::LoginRequestDto &request,
+    LoginSuccessHandler onSuccess,
+    LoginFailureHandler onFailure)
 {
-    return QStringLiteral("req_client_register_%1")
-        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    const QString requestId = createRequestId(QStringLiteral("login"));
+    const QUrl loginUrl = chatclient::config::AppConfig::instance().loginUrl();
+
+    CHATCLIENT_LOG_INFO("auth.api")
+        << "sending login request request_id="
+        << requestId
+        << " url="
+        << loginUrl.toString()
+        << " account="
+        << request.account
+        << " device_id="
+        << request.deviceId;
+
+    QNetworkRequest networkRequest(loginUrl);
+    applyJsonHeaders(&networkRequest, requestId);
+
+    const QByteArray requestBody =
+        QJsonDocument(chatclient::dto::auth::toJsonObject(request))
+            .toJson(QJsonDocument::Compact);
+    QNetworkReply *reply =
+        m_networkAccessManager->post(networkRequest, requestBody);
+
+    connect(reply,
+            &QNetworkReply::finished,
+            this,
+            [reply,
+             requestId,
+             onSuccess = std::move(onSuccess),
+             onFailure = std::move(onFailure)]() mutable {
+                const int httpStatus =
+                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+                        .toInt();
+                const QByteArray responseBody = reply->readAll();
+                const QString fallbackMessage =
+                    reply->error() == QNetworkReply::NoError
+                        ? QStringLiteral("服务端返回了无法识别的登录响应")
+                        : reply->errorString();
+
+                QJsonParseError parseError;
+                const QJsonDocument document =
+                    QJsonDocument::fromJson(responseBody, &parseError);
+                const bool hasJsonObject =
+                    parseError.error == QJsonParseError::NoError && document.isObject();
+
+                if (httpStatus >= 200 && httpStatus < 300 && hasJsonObject)
+                {
+                    chatclient::dto::auth::LoginResponseDto response;
+                    QString errorMessage;
+                    if (chatclient::dto::auth::parseLoginSuccessResponse(
+                            document.object(), &response, &errorMessage))
+                    {
+                        if (response.requestId.isEmpty())
+                        {
+                            response.requestId = requestId;
+                        }
+
+                        CHATCLIENT_LOG_INFO("auth.api")
+                            << "login request succeeded request_id="
+                            << response.requestId
+                            << " http_status="
+                            << httpStatus
+                            << " user_id="
+                            << response.user.userId
+                            << " device_session_id="
+                            << response.deviceSessionId;
+
+                        if (onSuccess)
+                        {
+                            onSuccess(response);
+                        }
+
+                        reply->deleteLater();
+                        return;
+                    }
+
+                    if (onFailure)
+                    {
+                        chatclient::dto::auth::ApiErrorDto error;
+                        error.httpStatus = httpStatus;
+                        error.errorCode = 50000;
+                        error.requestId = requestId;
+                        error.message = errorMessage.isEmpty()
+                                            ? fallbackMessage
+                                            : errorMessage;
+                        CHATCLIENT_LOG_ERROR("auth.api")
+                            << "login success response parse failed request_id="
+                            << requestId
+                            << " http_status="
+                            << httpStatus
+                            << " error="
+                            << error.message;
+                        onFailure(error);
+                    }
+
+                    reply->deleteLater();
+                    return;
+                }
+
+                if (onFailure)
+                {
+                    if (hasJsonObject)
+                    {
+                        auto error = chatclient::dto::auth::parseApiErrorResponse(
+                            document.object(), httpStatus, fallbackMessage);
+                        if (error.requestId.isEmpty())
+                        {
+                            error.requestId = requestId;
+                        }
+                        CHATCLIENT_LOG_WARN("auth.api")
+                            << "login request failed request_id="
+                            << error.requestId
+                            << " http_status="
+                            << httpStatus
+                            << " error_code="
+                            << error.errorCode
+                            << " message="
+                            << error.message;
+                        onFailure(error);
+                    }
+                    else
+                    {
+                        chatclient::dto::auth::ApiErrorDto error;
+                        error.httpStatus = httpStatus;
+                        error.requestId = requestId;
+                        error.message = fallbackMessage;
+                        CHATCLIENT_LOG_WARN("auth.api")
+                            << "login request returned non-json response request_id="
+                            << requestId
+                            << " http_status="
+                            << httpStatus
+                            << " message="
+                            << error.message;
+                        onFailure(error);
+                    }
+                }
+
+                reply->deleteLater();
+            });
+}
+
+QString AuthApiClient::createRequestId(const QString &action)
+{
+    return QStringLiteral("req_client_%1_%2")
+        .arg(action,
+             QUuid::createUuid().toString(QUuid::WithoutBraces));
 }
 
 void AuthApiClient::applyJsonHeaders(QNetworkRequest *request,

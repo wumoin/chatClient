@@ -1,8 +1,12 @@
 #include "service/auth_service.h"
 
 #include "log/app_logger.h"
+#include "service/auth_error_localizer.h"
 
+#include <QSettings>
 #include <QRegularExpression>
+#include <QSysInfo>
+#include <QUuid>
 
 namespace chatclient::service {
 namespace {
@@ -12,8 +16,30 @@ constexpr int kMaxAccountLength = 64;
 constexpr int kMinPasswordLength = 8;
 constexpr int kMaxPasswordLength = 72;
 constexpr int kMaxNicknameLength = 64;
+constexpr int kMaxDeviceIdLength = 128;
+constexpr int kMaxDevicePlatformLength = 32;
+constexpr int kMaxDeviceNameLength = 128;
 
 const QRegularExpression kAccountPattern(QStringLiteral("^[A-Za-z0-9_.-]+$"));
+const QRegularExpression kDevicePlatformPattern(
+    QStringLiteral("^[A-Za-z0-9_-]+$"));
+
+constexpr auto kSettingsOrganization = "wumo";
+constexpr auto kSettingsApplication = "chatClient";
+constexpr auto kSettingsDeviceIdKey = "auth/device_id";
+constexpr auto kSettingsAccountKey = "auth/account";
+constexpr auto kSettingsUserIdKey = "auth/user_id";
+constexpr auto kSettingsNicknameKey = "auth/nickname";
+constexpr auto kSettingsAvatarUrlKey = "auth/avatar_url";
+constexpr auto kSettingsDeviceSessionIdKey = "auth/device_session_id";
+constexpr auto kSettingsAccessTokenKey = "auth/access_token";
+constexpr auto kSettingsExpiresInSecKey = "auth/expires_in_sec";
+
+QSettings authSettings()
+{
+    return QSettings(QString::fromLatin1(kSettingsOrganization),
+                     QString::fromLatin1(kSettingsApplication));
+}
 
 }  // namespace
 
@@ -23,6 +49,10 @@ AuthService::AuthService(QObject *parent)
 {
     qRegisterMetaType<chatclient::dto::auth::RegisterUserDto>(
         "chatclient::dto::auth::RegisterUserDto");
+    qRegisterMetaType<chatclient::dto::auth::LoginSessionDto>(
+        "chatclient::dto::auth::LoginSessionDto");
+
+    restoreSession();
 }
 
 bool AuthService::registerUser(const QString &account,
@@ -88,9 +118,87 @@ bool AuthService::registerUser(const QString &account,
                 << error.errorCode
                 << " message="
                 << error.message;
-            emit registerFailed(error.message.isEmpty()
+            const QString localizedMessage = localizeAuthError(error);
+            emit registerFailed(localizedMessage.isEmpty()
                                     ? QStringLiteral("注册失败，请稍后重试")
-                                    : error.message);
+                                    : localizedMessage);
+        });
+
+    return true;
+}
+
+bool AuthService::loginUser(const QString &account,
+                            const QString &password,
+                            QString *errorMessage)
+{
+    if (m_loggingIn)
+    {
+        CHATCLIENT_LOG_WARN("auth.service")
+            << "login request ignored because another request is still running";
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("登录请求正在提交，请稍候");
+        }
+        return false;
+    }
+
+    chatclient::dto::auth::LoginRequestDto request;
+    if (!buildLoginRequest(account, password, &request, errorMessage))
+    {
+        CHATCLIENT_LOG_WARN("auth.service")
+            << "login validation failed account="
+            << account
+            << " reason="
+            << (errorMessage != nullptr ? *errorMessage : QString());
+        return false;
+    }
+
+    m_loggingIn = true;
+    emit loginStarted();
+    CHATCLIENT_LOG_INFO("auth.service")
+        << "login request started account="
+        << request.account
+        << " device_id="
+        << request.deviceId;
+
+    m_authApiClient.loginUser(
+        request,
+        [this, account](const chatclient::dto::auth::LoginResponseDto &response) {
+            m_loggingIn = false;
+
+            chatclient::dto::auth::LoginSessionDto session;
+            session.account = account;
+            session.user = response.user;
+            session.deviceSessionId = response.deviceSessionId;
+            session.accessToken = response.accessToken;
+            session.expiresInSec = response.expiresInSec;
+
+            persistSession(session);
+
+            CHATCLIENT_LOG_INFO("auth.service")
+                << "login request completed request_id="
+                << response.requestId
+                << " user_id="
+                << response.user.userId
+                << " device_session_id="
+                << response.deviceSessionId;
+            emit loginSucceeded(m_currentSession);
+        },
+        [this](const chatclient::dto::auth::ApiErrorDto &error) {
+            m_loggingIn = false;
+            CHATCLIENT_LOG_WARN("auth.service")
+                << "login request failed request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+            const QString localizedMessage = localizeAuthError(error);
+            emit loginFailed(localizedMessage.isEmpty()
+                                 ? QStringLiteral("登录失败，请稍后重试")
+                                 : localizedMessage);
         });
 
     return true;
@@ -99,6 +207,21 @@ bool AuthService::registerUser(const QString &account,
 bool AuthService::isRegistering() const
 {
     return m_registering;
+}
+
+bool AuthService::isLoggingIn() const
+{
+    return m_loggingIn;
+}
+
+bool AuthService::hasActiveSession() const
+{
+    return m_hasActiveSession;
+}
+
+const chatclient::dto::auth::LoginSessionDto &AuthService::currentSession() const
+{
+    return m_currentSession;
 }
 
 bool AuthService::buildRegisterRequest(
@@ -199,6 +322,228 @@ bool AuthService::buildRegisterRequest(
     }
 
     return true;
+}
+
+bool AuthService::buildLoginRequest(
+    const QString &account,
+    const QString &password,
+    chatclient::dto::auth::LoginRequestDto *out,
+    QString *errorMessage)
+{
+    if (account.isEmpty())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("请输入登录账号");
+        }
+        return false;
+    }
+
+    if (account != account.trimmed())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("账号不能包含前后空格");
+        }
+        return false;
+    }
+
+    if (account.size() < kMinAccountLength || account.size() > kMaxAccountLength)
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("账号长度必须在 %1 到 %2 个字符之间")
+                                .arg(kMinAccountLength)
+                                .arg(kMaxAccountLength);
+        }
+        return false;
+    }
+
+    if (!kAccountPattern.match(account).hasMatch())
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral("账号只允许字母、数字、下划线、点和短横线");
+        }
+        return false;
+    }
+
+    if (password.isEmpty())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("请输入登录密码");
+        }
+        return false;
+    }
+
+    const QString resolvedDeviceId = deviceId();
+    if (resolvedDeviceId.isEmpty() ||
+        resolvedDeviceId != resolvedDeviceId.trimmed() ||
+        resolvedDeviceId.size() > kMaxDeviceIdLength)
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("本机设备标识无效，请重启客户端后重试");
+        }
+        return false;
+    }
+
+    const QString resolvedDevicePlatform = devicePlatform().trimmed().toLower();
+    if (resolvedDevicePlatform.isEmpty() ||
+        resolvedDevicePlatform.size() > kMaxDevicePlatformLength ||
+        !kDevicePlatformPattern.match(resolvedDevicePlatform).hasMatch())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("当前客户端设备平台标识无效");
+        }
+        return false;
+    }
+
+    QString resolvedDeviceName = deviceName().trimmed();
+    if (resolvedDeviceName.size() > kMaxDeviceNameLength)
+    {
+        resolvedDeviceName = resolvedDeviceName.left(kMaxDeviceNameLength);
+    }
+
+    if (out)
+    {
+        out->account = account;
+        out->password = password;
+        out->deviceId = resolvedDeviceId;
+        out->devicePlatform = resolvedDevicePlatform;
+        out->deviceName = resolvedDeviceName;
+        out->clientVersion.clear();
+    }
+
+    return true;
+}
+
+QString AuthService::deviceId()
+{
+    QSettings settings = authSettings();
+    const QString storedDeviceId =
+        settings.value(QString::fromLatin1(kSettingsDeviceIdKey))
+            .toString()
+            .trimmed();
+    if (!storedDeviceId.isEmpty())
+    {
+        return storedDeviceId;
+    }
+
+    const QString generatedDeviceId = QStringLiteral("desktop_%1")
+                                          .arg(QUuid::createUuid().toString(
+                                              QUuid::WithoutBraces));
+    settings.setValue(QString::fromLatin1(kSettingsDeviceIdKey),
+                      generatedDeviceId);
+    return generatedDeviceId;
+}
+
+QString AuthService::devicePlatform()
+{
+    return QStringLiteral("desktop");
+}
+
+QString AuthService::deviceName()
+{
+    const QString productName = QSysInfo::prettyProductName().trimmed();
+    const QString hostName = QSysInfo::machineHostName().trimmed();
+
+    if (!productName.isEmpty() && !hostName.isEmpty())
+    {
+        return QStringLiteral("%1 (%2)").arg(productName, hostName);
+    }
+
+    if (!productName.isEmpty())
+    {
+        return productName;
+    }
+
+    if (!hostName.isEmpty())
+    {
+        return hostName;
+    }
+
+    return QStringLiteral("Desktop Client");
+}
+
+void AuthService::persistSession(
+    const chatclient::dto::auth::LoginSessionDto &session)
+{
+    m_currentSession = session;
+    m_hasActiveSession = !session.accessToken.isEmpty() &&
+                         !session.deviceSessionId.isEmpty() &&
+                         !session.user.userId.isEmpty();
+
+    if (!m_hasActiveSession)
+    {
+        return;
+    }
+
+    QSettings settings = authSettings();
+    settings.setValue(QString::fromLatin1(kSettingsAccountKey), session.account);
+    settings.setValue(QString::fromLatin1(kSettingsUserIdKey),
+                      session.user.userId);
+    settings.setValue(QString::fromLatin1(kSettingsNicknameKey),
+                      session.user.nickname);
+    settings.setValue(QString::fromLatin1(kSettingsAvatarUrlKey),
+                      session.user.avatarUrl);
+    settings.setValue(QString::fromLatin1(kSettingsDeviceSessionIdKey),
+                      session.deviceSessionId);
+    settings.setValue(QString::fromLatin1(kSettingsAccessTokenKey),
+                      session.accessToken);
+    settings.setValue(QString::fromLatin1(kSettingsExpiresInSecKey),
+                      session.expiresInSec);
+}
+
+void AuthService::restoreSession()
+{
+    QSettings settings = authSettings();
+
+    chatclient::dto::auth::LoginSessionDto session;
+    session.account =
+        settings.value(QString::fromLatin1(kSettingsAccountKey))
+            .toString()
+            .trimmed();
+    session.user.userId =
+        settings.value(QString::fromLatin1(kSettingsUserIdKey))
+            .toString()
+            .trimmed();
+    session.user.nickname =
+        settings.value(QString::fromLatin1(kSettingsNicknameKey))
+            .toString()
+            .trimmed();
+    session.user.avatarUrl =
+        settings.value(QString::fromLatin1(kSettingsAvatarUrlKey))
+            .toString()
+            .trimmed();
+    session.deviceSessionId =
+        settings.value(QString::fromLatin1(kSettingsDeviceSessionIdKey))
+            .toString()
+            .trimmed();
+    session.accessToken =
+        settings.value(QString::fromLatin1(kSettingsAccessTokenKey))
+            .toString()
+            .trimmed();
+    session.expiresInSec =
+        settings.value(QString::fromLatin1(kSettingsExpiresInSecKey))
+            .toLongLong();
+
+    m_currentSession = session;
+    m_hasActiveSession = !session.accessToken.isEmpty() &&
+                         !session.deviceSessionId.isEmpty() &&
+                         !session.user.userId.isEmpty();
+
+    if (m_hasActiveSession)
+    {
+        CHATCLIENT_LOG_INFO("auth.service")
+            << "restored local session user_id="
+            << m_currentSession.user.userId
+            << " device_session_id="
+            << m_currentSession.deviceSessionId;
+    }
 }
 
 }  // namespace chatclient::service

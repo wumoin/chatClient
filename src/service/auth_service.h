@@ -10,10 +10,11 @@ namespace chatclient::service {
 /**
  * @brief 客户端认证业务服务。
  *
- * 当前先落地注册功能：
- * 1) 做本地参数校验；
- * 2) 调用 AuthApiClient 发起 HTTP 注册请求；
- * 3) 把结果转换成界面更容易消费的信号。
+ * 当前承接客户端最小认证闭环：
+ * 1) 做注册 / 登录表单本地校验；
+ * 2) 调用 AuthApiClient 发起真实 HTTP 请求；
+ * 3) 在登录成功后保存本地 access_token 和 device_session；
+ * 4) 把结果转换成界面更容易消费的信号。
  */
 class AuthService : public QObject
 {
@@ -42,10 +43,39 @@ public:
                       QString *errorMessage = nullptr);
 
     /**
+     * @brief 发起登录流程。
+     * @param account 登录账号。
+     * @param password 登录密码。
+     * @param errorMessage 本地校验失败时写入错误消息，可为空。
+     * @return true 表示请求已发出；false 表示本地校验失败或已有请求在进行中。
+     */
+    bool loginUser(const QString &account,
+                   const QString &password,
+                   QString *errorMessage = nullptr);
+
+    /**
      * @brief 判断当前是否正在提交注册请求。
      * @return true 表示注册请求仍在进行中；false 表示当前空闲。
      */
     bool isRegistering() const;
+
+    /**
+     * @brief 判断当前是否正在提交登录请求。
+     * @return true 表示登录请求仍在进行中；false 表示当前空闲。
+     */
+    bool isLoggingIn() const;
+
+    /**
+     * @brief 判断当前是否已持有本地登录态。
+     * @return true 表示当前已有可复用的本地会话；false 表示尚未登录。
+     */
+    bool hasActiveSession() const;
+
+    /**
+     * @brief 返回当前本地登录会话。
+     * @return 当前保存的登录会话 DTO。
+     */
+    const chatclient::dto::auth::LoginSessionDto &currentSession() const;
 
 signals:
     /**
@@ -65,6 +95,23 @@ signals:
      */
     void registerFailed(const QString &message);
 
+    /**
+     * @brief 登录请求已开始提交。
+     */
+    void loginStarted();
+
+    /**
+     * @brief 登录成功。
+     * @param session 客户端当前保存的登录会话。
+     */
+    void loginSucceeded(const chatclient::dto::auth::LoginSessionDto &session);
+
+    /**
+     * @brief 登录失败。
+     * @param message 适合直接展示给用户的错误提示。
+     */
+    void loginFailed(const QString &message);
+
 private:
     /**
      * @brief 对注册表单做本地校验，并构造请求 DTO。
@@ -83,8 +130,53 @@ private:
                                      chatclient::dto::auth::RegisterRequestDto *out,
                                      QString *errorMessage);
 
+    /**
+     * @brief 对登录表单做本地校验，并构造请求 DTO。
+     * @param account 账号原始输入。
+     * @param password 密码原始输入。
+     * @param out 成功时写入标准化后的登录请求 DTO。
+     * @param errorMessage 失败时写入错误消息。
+     * @return true 表示本地校验通过；false 表示存在非法输入。
+     */
+    static bool buildLoginRequest(const QString &account,
+                                  const QString &password,
+                                  chatclient::dto::auth::LoginRequestDto *out,
+                                  QString *errorMessage);
+
+    /**
+     * @brief 读取或生成当前客户端的稳定设备标识。
+     * @return 可用于登录接口 `device_id` 的字符串。
+     */
+    static QString deviceId();
+
+    /**
+     * @brief 返回当前客户端设备平台标识。
+     * @return 当前固定返回 `desktop`。
+     */
+    static QString devicePlatform();
+
+    /**
+     * @brief 返回当前客户端设备展示名。
+     * @return 适合服务端设备页展示的设备名称。
+     */
+    static QString deviceName();
+
+    /**
+     * @brief 保存本地登录态。
+     * @param session 当前登录成功后的会话信息。
+     */
+    void persistSession(const chatclient::dto::auth::LoginSessionDto &session);
+
+    /**
+     * @brief 从本地持久化介质恢复登录态。
+     */
+    void restoreSession();
+
     chatclient::api::AuthApiClient m_authApiClient;
     bool m_registering = false;
+    bool m_loggingIn = false;
+    bool m_hasActiveSession = false;
+    chatclient::dto::auth::LoginSessionDto m_currentSession;
 };
 
 }  // namespace chatclient::service

@@ -2,6 +2,7 @@
 
 #include "config/appconfig.h"
 #include "log/app_logger.h"
+#include "qt_widget/chatwindow.h"
 #include "service/auth_service.h"
 
 #include <QCheckBox>
@@ -86,15 +87,31 @@ LoginWindow::LoginWindow(QWidget *parent)
     contentLayout->addStretch(1);
     rootLayout->addWidget(content);
 
-    // 当前先把客户端注册功能接入真实 HTTP 接口。
-    // 登录功能尚未实现，因此登录页仍保留原型行为，注册页则通过 AuthService 走完整请求链路。
+    // 当前登录和注册都已经接入真实认证 service。
+    // 窗口层只负责收集表单、切换提交态和响应最终结果。
+    connect(m_authService,
+            &chatclient::service::AuthService::loginStarted,
+            this,
+            [this]() {
+                setLoginSubmitting(true);
+                setLoginStatusMessage(QStringLiteral("正在提交登录请求..."),
+                                      StatusTone::kInfo);
+            });
+    connect(m_authService,
+            &chatclient::service::AuthService::loginSucceeded,
+            this,
+            &LoginWindow::handleLoginSucceeded);
+    connect(m_authService,
+            &chatclient::service::AuthService::loginFailed,
+            this,
+            &LoginWindow::handleLoginFailed);
     connect(m_authService,
             &chatclient::service::AuthService::registerStarted,
             this,
             [this]() {
                 setRegisterSubmitting(true);
                 setRegisterStatusMessage(QStringLiteral("正在提交注册请求..."),
-                                         RegisterStatusTone::kInfo);
+                                         StatusTone::kInfo);
             });
     connect(m_authService,
             &chatclient::service::AuthService::registerSucceeded,
@@ -188,7 +205,9 @@ void LoginWindow::showRegisterPage()
     m_stack->setCurrentIndex(1);
     m_titleLabel->setText(QStringLiteral("创建账号"));
     m_subtitleLabel->setText(QStringLiteral("填写信息以注册新账号"));
-    setRegisterStatusMessage(QString(), RegisterStatusTone::kInfo);
+    setLoginSubmitting(false);
+    setLoginStatusMessage(QString(), StatusTone::kInfo);
+    setRegisterStatusMessage(QString(), StatusTone::kInfo);
 }
 
 void LoginWindow::showLoginPage()
@@ -202,8 +221,10 @@ void LoginWindow::showLoginPage()
     m_titleLabel->setText(
         chatclient::config::AppConfig::instance().displayName());
     m_subtitleLabel->setText(QStringLiteral("欢迎回来，请登录"));
+    setLoginSubmitting(false);
+    setLoginStatusMessage(QString(), StatusTone::kInfo);
     setRegisterSubmitting(false);
-    setRegisterStatusMessage(QString(), RegisterStatusTone::kInfo);
+    setRegisterStatusMessage(QString(), StatusTone::kInfo);
 }
 
 QWidget *LoginWindow::createLoginPage()
@@ -239,15 +260,11 @@ QWidget *LoginWindow::createLoginPage()
     m_loginButton->setMinimumHeight(40);
     m_loginButton->setProperty("variant", QStringLiteral("primary"));
 
-    connect(m_loginButton,
-            &QPushButton::clicked,
-            this,
-            [this]() {
-                QMessageBox::information(
-                    this,
-                    QStringLiteral("功能未完成"),
-                    QStringLiteral("当前客户端已接入真实注册功能，登录功能仍在开发中。"));
-            });
+    // 状态提示区：统一展示本地校验、服务端校验和网络错误。
+    m_loginStatusLabel = new QLabel(card);
+    m_loginStatusLabel->setObjectName(QStringLiteral("authStatusLabel"));
+    m_loginStatusLabel->setWordWrap(true);
+    m_loginStatusLabel->setVisible(false);
 
     
     // 辅助操作区：忘记密码提示 + 注册入口。
@@ -263,7 +280,22 @@ QWidget *LoginWindow::createLoginPage()
     cardLayout->addWidget(m_passwordEdit);
     cardLayout->addLayout(optionsLayout);
     cardLayout->addWidget(m_loginButton);
+    cardLayout->addWidget(m_loginStatusLabel);
     cardLayout->addLayout(helperLayout);
+
+    // 点击“登录”时走真实认证链路。
+    connect(m_loginButton,
+            &QPushButton::clicked,
+            this,
+            &LoginWindow::handleLoginSubmit);
+    connect(m_passwordEdit,
+            &QLineEdit::returnPressed,
+            this,
+            &LoginWindow::handleLoginSubmit);
+    connect(m_accountEdit,
+            &QLineEdit::returnPressed,
+            this,
+            &LoginWindow::handleLoginSubmit);
 
     // 点击“注册新账号”时切换到注册页。
     connect(m_registerButton, &QPushButton::clicked, this, &LoginWindow::showRegisterPage);
@@ -298,14 +330,14 @@ QWidget *LoginWindow::createRegisterPage()
     m_registerConfirmEdit->setPlaceholderText(QStringLiteral("再次输入密码"));
     m_registerConfirmEdit->setEchoMode(QLineEdit::Password);
 
-    // 注册提交按钮：用于提交注册信息（逻辑待接入）。
+    // 注册提交按钮：用于提交注册信息。
     m_registerSubmitButton = new QPushButton(QStringLiteral("注册"), card);
     m_registerSubmitButton->setMinimumHeight(40);
     m_registerSubmitButton->setProperty("variant", QStringLiteral("primary"));
 
     // 状态提示区：统一展示本地校验、服务端校验和网络错误。
     m_registerStatusLabel = new QLabel(card);
-    m_registerStatusLabel->setObjectName(QStringLiteral("registerStatusLabel"));
+    m_registerStatusLabel->setObjectName(QStringLiteral("authStatusLabel"));
     m_registerStatusLabel->setWordWrap(true);
     m_registerStatusLabel->setVisible(false);
 
@@ -345,6 +377,52 @@ QWidget *LoginWindow::createRegisterPage()
     return card;
 }
 
+void LoginWindow::handleLoginSubmit()
+{
+    if (!m_authService) {
+        return;
+    }
+
+    CHATCLIENT_LOG_INFO("login.window")
+        << "login submit clicked account="
+        << (m_accountEdit ? m_accountEdit->text() : QString());
+
+    QString errorMessage;
+    if (!m_authService->loginUser(
+            m_accountEdit ? m_accountEdit->text() : QString(),
+            m_passwordEdit ? m_passwordEdit->text() : QString(),
+            &errorMessage)) {
+        CHATCLIENT_LOG_WARN("login.window")
+            << "login submit rejected message="
+            << errorMessage;
+        setLoginStatusMessage(errorMessage, StatusTone::kError);
+        return;
+    }
+}
+
+void LoginWindow::handleLoginSucceeded(
+    const chatclient::dto::auth::LoginSessionDto &session)
+{
+    CHATCLIENT_LOG_INFO("login.window")
+        << "login succeeded user_id="
+        << session.user.userId
+        << " device_session_id="
+        << session.deviceSessionId;
+    setLoginSubmitting(false);
+    setLoginStatusMessage(QStringLiteral("登录成功，正在进入聊天页..."),
+                          StatusTone::kSuccess);
+    openChatWindow(session);
+}
+
+void LoginWindow::handleLoginFailed(const QString &message)
+{
+    CHATCLIENT_LOG_WARN("login.window")
+        << "login failed message="
+        << message;
+    setLoginSubmitting(false);
+    setLoginStatusMessage(message, StatusTone::kError);
+}
+
 void LoginWindow::handleRegisterSubmit()
 {
     if (!m_authService) {
@@ -364,7 +442,7 @@ void LoginWindow::handleRegisterSubmit()
         CHATCLIENT_LOG_WARN("login.window")
             << "register submit rejected message="
             << errorMessage;
-        setRegisterStatusMessage(errorMessage, RegisterStatusTone::kError);
+        setRegisterStatusMessage(errorMessage, StatusTone::kError);
         return;
     }
 }
@@ -379,7 +457,7 @@ void LoginWindow::handleRegisterSucceeded(
         << user.account;
     setRegisterSubmitting(false);
     setRegisterStatusMessage(QStringLiteral("注册成功，请返回登录页继续。"),
-                             RegisterStatusTone::kSuccess);
+                             StatusTone::kSuccess);
 
     if (m_accountEdit) {
         m_accountEdit->setText(user.account);
@@ -404,7 +482,7 @@ void LoginWindow::handleRegisterSucceeded(
     QMessageBox::information(
         this,
         QStringLiteral("注册成功"),
-        QStringLiteral("账号 %1 已创建成功。当前客户端登录接口仍在开发中，请稍后使用登录功能。")
+        QStringLiteral("账号 %1 已创建成功，请直接在登录页继续登录。")
             .arg(user.account));
 }
 
@@ -414,7 +492,56 @@ void LoginWindow::handleRegisterFailed(const QString &message)
         << "register failed message="
         << message;
     setRegisterSubmitting(false);
-    setRegisterStatusMessage(message, RegisterStatusTone::kError);
+    setRegisterStatusMessage(message, StatusTone::kError);
+}
+
+void LoginWindow::setLoginSubmitting(bool submitting)
+{
+    if (m_accountEdit) {
+        m_accountEdit->setEnabled(!submitting);
+    }
+    if (m_passwordEdit) {
+        m_passwordEdit->setEnabled(!submitting);
+    }
+    if (m_rememberCheck) {
+        m_rememberCheck->setEnabled(!submitting);
+    }
+    if (m_autoLoginCheck) {
+        m_autoLoginCheck->setEnabled(!submitting);
+    }
+    if (m_loginButton) {
+        m_loginButton->setEnabled(!submitting);
+    }
+    if (m_registerButton) {
+        m_registerButton->setEnabled(!submitting);
+    }
+}
+
+void LoginWindow::setLoginStatusMessage(const QString &message,
+                                        StatusTone tone)
+{
+    if (!m_loginStatusLabel) {
+        return;
+    }
+
+    if (message.isEmpty()) {
+        m_loginStatusLabel->clear();
+        m_loginStatusLabel->setVisible(false);
+        return;
+    }
+
+    QString toneText = QStringLiteral("info");
+    if (tone == StatusTone::kSuccess) {
+        toneText = QStringLiteral("success");
+    } else if (tone == StatusTone::kError) {
+        toneText = QStringLiteral("error");
+    }
+
+    m_loginStatusLabel->setProperty("statusTone", toneText);
+    m_loginStatusLabel->setText(message);
+    m_loginStatusLabel->setVisible(true);
+    m_loginStatusLabel->style()->unpolish(m_loginStatusLabel);
+    m_loginStatusLabel->style()->polish(m_loginStatusLabel);
 }
 
 void LoginWindow::setRegisterSubmitting(bool submitting)
@@ -440,7 +567,7 @@ void LoginWindow::setRegisterSubmitting(bool submitting)
 }
 
 void LoginWindow::setRegisterStatusMessage(const QString &message,
-                                           RegisterStatusTone tone)
+                                           StatusTone tone)
 {
     if (!m_registerStatusLabel) {
         return;
@@ -453,9 +580,9 @@ void LoginWindow::setRegisterStatusMessage(const QString &message,
     }
 
     QString toneText = QStringLiteral("info");
-    if (tone == RegisterStatusTone::kSuccess) {
+    if (tone == StatusTone::kSuccess) {
         toneText = QStringLiteral("success");
-    } else if (tone == RegisterStatusTone::kError) {
+    } else if (tone == StatusTone::kError) {
         toneText = QStringLiteral("error");
     }
 
@@ -464,4 +591,23 @@ void LoginWindow::setRegisterStatusMessage(const QString &message,
     m_registerStatusLabel->setVisible(true);
     m_registerStatusLabel->style()->unpolish(m_registerStatusLabel);
     m_registerStatusLabel->style()->polish(m_registerStatusLabel);
+}
+
+void LoginWindow::openChatWindow(
+    const chatclient::dto::auth::LoginSessionDto &session)
+{
+    if (!m_chatWindow) {
+        m_chatWindow = new ChatWindow();
+    }
+
+    const QString displayName = session.user.nickname.isEmpty()
+                                    ? session.account
+                                    : session.user.nickname;
+    const QString statusText = QStringLiteral("已登录 · %1").arg(session.account);
+
+    m_chatWindow->setCurrentUserProfile(displayName, statusText);
+    m_chatWindow->show();
+    m_chatWindow->raise();
+    m_chatWindow->activateWindow();
+    hide();
 }

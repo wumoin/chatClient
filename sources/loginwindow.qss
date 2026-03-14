@@ -12,13 +12,13 @@ QLabel#titleLabel {
 QLabel#subtitleLabel {
     color: #6f7782;
 }
-QLabel#registerStatusLabel[statusTone="info"] {
+QLabel#authStatusLabel[statusTone="info"] {
     color: #1f6feb;
 }
-QLabel#registerStatusLabel[statusTone="success"] {
+QLabel#authStatusLabel[statusTone="success"] {
     color: #0f9f5f;
 }
-QLabel#registerStatusLabel[statusTone="error"] {
+QLabel#authStatusLabel[statusTone="error"] {
     color: #d13b3b;
 }
 

@@ -64,6 +64,27 @@ QJsonObject toJsonObject(const RegisterRequestDto &request)
     return object;
 }
 
+QJsonObject toJsonObject(const LoginRequestDto &request)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("account"), request.account);
+    object.insert(QStringLiteral("password"), request.password);
+    object.insert(QStringLiteral("device_id"), request.deviceId);
+    object.insert(QStringLiteral("device_platform"), request.devicePlatform);
+
+    if (!request.deviceName.isEmpty())
+    {
+        object.insert(QStringLiteral("device_name"), request.deviceName);
+    }
+
+    if (!request.clientVersion.isEmpty())
+    {
+        object.insert(QStringLiteral("client_version"), request.clientVersion);
+    }
+
+    return object;
+}
+
 bool parseRegisterSuccessResponse(const QJsonObject &root,
                                   RegisterResponseDto *out,
                                   QString *errorMessage)
@@ -133,6 +154,91 @@ bool parseRegisterSuccessResponse(const QJsonObject &root,
     }
 
     parsedResponse.user.createdAtMs = static_cast<qint64>(createdAtValue.toDouble());
+
+    if (out)
+    {
+        *out = parsedResponse;
+    }
+    return true;
+}
+
+bool parseLoginSuccessResponse(const QJsonObject &root,
+                               LoginResponseDto *out,
+                               QString *errorMessage)
+{
+    if (root.value(QStringLiteral("code")).toInt(-1) != 0)
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("服务端返回了非成功业务码");
+        }
+        return false;
+    }
+
+    const QJsonValue dataValue = root.value(QStringLiteral("data"));
+    if (!dataValue.isObject())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("响应缺少 data 对象");
+        }
+        return false;
+    }
+
+    const QJsonObject dataObject = dataValue.toObject();
+    const QJsonValue userValue = dataObject.value(QStringLiteral("user"));
+    if (!userValue.isObject())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("响应缺少 user 对象");
+        }
+        return false;
+    }
+
+    LoginResponseDto parsedResponse;
+    parsedResponse.requestId = readOptionalString(root, QStringLiteral("request_id"));
+
+    const QJsonObject userObject = userValue.toObject();
+    if (!readRequiredString(userObject,
+                            QStringLiteral("user_id"),
+                            &parsedResponse.user.userId,
+                            errorMessage) ||
+        !readRequiredString(userObject,
+                            QStringLiteral("nickname"),
+                            &parsedResponse.user.nickname,
+                            errorMessage) ||
+        !readRequiredString(dataObject,
+                            QStringLiteral("device_session_id"),
+                            &parsedResponse.deviceSessionId,
+                            errorMessage) ||
+        !readRequiredString(dataObject,
+                            QStringLiteral("access_token"),
+                            &parsedResponse.accessToken,
+                            errorMessage))
+    {
+        return false;
+    }
+
+    parsedResponse.user.avatarUrl =
+        readOptionalString(userObject, QStringLiteral("avatar_url"));
+    parsedResponse.refreshToken =
+        readOptionalString(dataObject, QStringLiteral("refresh_token"));
+
+    const QJsonValue expiresInValue =
+        dataObject.value(QStringLiteral("expires_in_sec"));
+    if (!expiresInValue.isDouble())
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral("响应字段 expires_in_sec 缺失或不是数字");
+        }
+        return false;
+    }
+
+    parsedResponse.expiresInSec =
+        static_cast<qint64>(expiresInValue.toDouble());
 
     if (out)
     {

@@ -12,6 +12,7 @@ class QStackedWidget;
 class QWidget;
 class QMouseEvent;
 class QPaintEvent;
+class ChatWindow;
 
 namespace chatclient::service {
 class AuthService;
@@ -24,9 +25,9 @@ class LoginWindow : public QWidget
 
 public:
     /**
-     * @brief 注册页状态提示类型。
+     * @brief 表单状态提示类型。
      */
-    enum class RegisterStatusTone
+    enum class StatusTone
     {
         kInfo,
         kSuccess,
@@ -88,6 +89,22 @@ private:
     QWidget *createRegisterPage();
 
     /**
+     * @brief 提交登录表单。
+     */
+    void handleLoginSubmit();
+    /**
+     * @brief 处理登录成功结果。
+     * @param session 当前保存到客户端的登录会话。
+     */
+    void handleLoginSucceeded(
+        const chatclient::dto::auth::LoginSessionDto &session);
+    /**
+     * @brief 处理登录失败结果。
+     * @param message 可直接展示给用户的错误提示。
+     */
+    void handleLoginFailed(const QString &message);
+
+    /**
      * @brief 提交注册表单。
      */
     void handleRegisterSubmit();
@@ -103,6 +120,17 @@ private:
      */
     void handleRegisterFailed(const QString &message);
     /**
+     * @brief 统一切换登录页控件的忙碌状态。
+     * @param submitting true 表示登录请求提交中；false 表示恢复可编辑。
+     */
+    void setLoginSubmitting(bool submitting);
+    /**
+     * @brief 设置登录页状态提示文案和颜色。
+     * @param message 需要展示的状态文本；为空时隐藏提示。
+     * @param tone 当前提示语气，例如信息、成功或错误。
+     */
+    void setLoginStatusMessage(const QString &message, StatusTone tone);
+    /**
      * @brief 统一切换注册页控件的忙碌状态。
      * @param submitting true 表示注册请求提交中；false 表示恢复可编辑。
      */
@@ -112,8 +140,13 @@ private:
      * @param message 需要展示的状态文本；为空时隐藏提示。
      * @param tone 当前提示语气，例如信息、成功或错误。
      */
-    void setRegisterStatusMessage(const QString &message,
-                                  RegisterStatusTone tone);
+    void setRegisterStatusMessage(const QString &message, StatusTone tone);
+
+    /**
+     * @brief 打开聊天窗口并把当前登录用户信息灌入界面。
+     * @param session 当前登录会话。
+     */
+    void openChatWindow(const chatclient::dto::auth::LoginSessionDto &session);
 
     // 标题与副标题：用于提示当前所处流程。
     QLabel *m_titleLabel = nullptr;
@@ -127,14 +160,16 @@ private:
     QLineEdit *m_accountEdit = nullptr;
     // 密码输入框：采用 Password 回显模式。
     QLineEdit *m_passwordEdit = nullptr;
-    // 记住我：保存登录状态的开关（逻辑待接入）。
+    // 记住我：当前仅保留界面入口，后续再接更细的记住策略。
     QCheckBox *m_rememberCheck = nullptr;
-    // 自动登录：下次启动自动登录的开关（逻辑待接入）。
+    // 自动登录：当前仅保留界面入口，后续再接启动恢复策略。
     QCheckBox *m_autoLoginCheck = nullptr;
-    // 登录按钮：触发登录动作（信号/槽待接入）。
+    // 登录按钮：触发真实登录请求。
     QPushButton *m_loginButton = nullptr;
-    // 注册按钮：跳转注册流程（信号/槽待接入）。
+    // 注册按钮：跳转注册流程。
     QPushButton *m_registerButton = nullptr;
+    // 登录页状态提示：显示“登录中 / 成功 / 失败”等反馈。
+    QLabel *m_loginStatusLabel = nullptr;
 
     // 注册页输入框：账号。
     QLineEdit *m_registerAccountEdit = nullptr;
@@ -150,8 +185,10 @@ private:
     QPushButton *m_registerSubmitButton = nullptr;
     // 注册页返回按钮：回到登录页。
     QPushButton *m_backToLoginButton = nullptr;
-    // 认证业务服务：负责注册请求校验与 HTTP 调用。
+    // 认证业务服务：负责注册 / 登录请求校验与 HTTP 调用。
     chatclient::service::AuthService *m_authService = nullptr;
+    // 聊天窗口：登录成功后展示。
+    ChatWindow *m_chatWindow = nullptr;
 
     // 拖拽状态与偏移。
     bool m_dragging = false;

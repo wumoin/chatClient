@@ -54,6 +54,20 @@ ChatWindow::ChatWindow(QWidget *parent)
     setStyleSheet(loadChatStyleSheet());
 }
 
+void ChatWindow::setCurrentUserProfile(const QString &displayName,
+                                       const QString &statusText)
+{
+    if (m_profileNameLabel)
+    {
+        m_profileNameLabel->setText(displayName);
+    }
+
+    if (m_profileStatusLabel)
+    {
+        m_profileStatusLabel->setText(statusText);
+    }
+}
+
 QWidget *ChatWindow::createSidebar()
 {
     const auto &config = chatclient::config::AppConfig::instance();
@@ -97,13 +111,13 @@ QWidget *ChatWindow::createSidebar()
     profileLayout->setContentsMargins(12, 12, 12, 12);
     profileLayout->setSpacing(4);
 
-    auto *nameLabel = new QLabel(QStringLiteral("Wumo"), profileCard);
-    nameLabel->setObjectName(QStringLiteral("profileName"));
-    auto *roleLabel = new QLabel(QStringLiteral("在线"), profileCard);
-    roleLabel->setObjectName(QStringLiteral("profileStatus"));
+    m_profileNameLabel = new QLabel(QStringLiteral("未登录"), profileCard);
+    m_profileNameLabel->setObjectName(QStringLiteral("profileName"));
+    m_profileStatusLabel = new QLabel(QStringLiteral("等待登录"), profileCard);
+    m_profileStatusLabel->setObjectName(QStringLiteral("profileStatus"));
 
-    profileLayout->addWidget(nameLabel);
-    profileLayout->addWidget(roleLabel);
+    profileLayout->addWidget(m_profileNameLabel);
+    profileLayout->addWidget(m_profileStatusLabel);
 
     // 列表区域设置 stretch=1，让其占据侧边栏的主要高度。
     sidebarLayout->addWidget(brandLabel);

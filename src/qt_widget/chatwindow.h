@@ -4,6 +4,7 @@
 #include <QWidget>
 
 class QLineEdit;
+class QLabel;
 class QListWidget;
 class QTextEdit;
 class MessageListView;
@@ -25,6 +26,14 @@ public:
      * @param parent 父级 QWidget，可为空。
      */
     explicit ChatWindow(QWidget *parent = nullptr);
+
+    /**
+     * @brief 设置当前登录用户的展示信息。
+     * @param displayName 界面展示名称。
+     * @param statusText 当前状态文本。
+     */
+    void setCurrentUserProfile(const QString &displayName,
+                               const QString &statusText);
 
 private:
     /**
@@ -64,4 +73,8 @@ private:
     QString m_currentConversationId;
     // 右侧：底部文本输入框。
     QTextEdit *m_messageEditor = nullptr;
+    // 左下角：当前登录用户展示名。
+    QLabel *m_profileNameLabel = nullptr;
+    // 左下角：当前登录用户状态文本。
+    QLabel *m_profileStatusLabel = nullptr;
 };
