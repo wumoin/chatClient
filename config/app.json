@@ -13,6 +13,7 @@
             "avatar_temp_upload_path": "/api/v1/users/avatar/temp",
             "user_avatar_path_template": "/api/v1/users/{user_id}/avatar",
             "user_search_path": "/api/v1/users/search",
+            "friend_list_path": "/api/v1/friends",
             "friend_send_request_path": "/api/v1/friends/requests",
             "friend_outgoing_requests_path": "/api/v1/friends/requests/outgoing",
             "friend_incoming_requests_path": "/api/v1/friends/requests/incoming",

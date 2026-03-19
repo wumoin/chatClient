@@ -122,6 +122,45 @@ bool parseFriendRequestItem(const QJsonObject &object,
     return true;
 }
 
+bool parseFriendListItem(const QJsonObject &object,
+                         FriendListItemDto *out,
+                         QString *errorMessage)
+{
+    const QJsonValue userValue = object.value(QStringLiteral("user"));
+    if (!userValue.isObject())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("响应缺少 user 对象");
+        }
+        return false;
+    }
+
+    FriendListItemDto parsedItem;
+    if (!parseFriendUser(userValue.toObject(), &parsedItem.user, errorMessage))
+    {
+        return false;
+    }
+
+    const QJsonValue createdAtValue = object.value(QStringLiteral("created_at_ms"));
+    if (!createdAtValue.isDouble())
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral("响应字段 created_at_ms 缺失或不是数字");
+        }
+        return false;
+    }
+    parsedItem.createdAtMs = static_cast<qint64>(createdAtValue.toDouble());
+
+    if (out)
+    {
+        *out = parsedItem;
+    }
+    return true;
+}
+
 }  // namespace
 
 QJsonObject toJsonObject(const SendFriendRequestRequestDto &request)
@@ -306,6 +345,70 @@ bool parseSendFriendRequestSuccessResponse(
                                 errorMessage))
     {
         return false;
+    }
+
+    if (out)
+    {
+        *out = response;
+    }
+    return true;
+}
+
+bool parseFriendListSuccessResponse(const QJsonObject &root,
+                                    FriendListResponseDto *out,
+                                    QString *errorMessage)
+{
+    if (root.value(QStringLiteral("code")).toInt(-1) != 0)
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("服务端返回了非成功业务码");
+        }
+        return false;
+    }
+
+    const QJsonValue dataValue = root.value(QStringLiteral("data"));
+    if (!dataValue.isObject())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("响应缺少 data 对象");
+        }
+        return false;
+    }
+
+    const QJsonValue friendsValue =
+        dataValue.toObject().value(QStringLiteral("friends"));
+    if (!friendsValue.isArray())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("响应字段 friends 缺失或不是数组");
+        }
+        return false;
+    }
+
+    FriendListResponseDto response;
+    response.requestId = readOptionalString(root, QStringLiteral("request_id"));
+
+    const QJsonArray friendsArray = friendsValue.toArray();
+    for (const QJsonValue &itemValue : friendsArray)
+    {
+        if (!itemValue.isObject())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = QStringLiteral("好友列表项不是对象");
+            }
+            return false;
+        }
+
+        FriendListItemDto item;
+        if (!parseFriendListItem(itemValue.toObject(), &item, errorMessage))
+        {
+            return false;
+        }
+        response.friends.append(item);
     }
 
     if (out)

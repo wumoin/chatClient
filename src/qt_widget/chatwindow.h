@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dto/friend_dto.h"
+
 #include <QString>
 #include <QWidget>
 
@@ -20,6 +22,7 @@ class UserApiClient;
 
 namespace chatclient::service {
 class AuthService;
+class FriendService;
 }
 
 // ChatWindow 当前承担“聊天主界面骨架”职责：
@@ -28,9 +31,9 @@ class AuthService;
 // 3) 保留现有消息演示链路，并为后续好友能力预留独立入口。
 //
 // 注意：
-// - 当前除左上角头像加载外，这里仍然不处理真实业务网络请求；
-// - 会话列表当前继续使用 QListWidget；
-// - “添加好友”当前只完成独立弹窗骨架，业务提交后续再接 service。
+// - 消息页当前仍然使用演示数据；
+// - 好友页当前已接入真实好友列表 HTTP 数据源；
+// - 会话列表当前继续使用 QListWidget。
 class ChatWindow : public QWidget
 {
     Q_OBJECT
@@ -154,6 +157,21 @@ class ChatWindow : public QWidget
     void showAddFriendDialog();
 
     /**
+     * @brief 拉取当前登录用户的正式好友列表。
+     * @param keepSelection true 表示尽量保留当前选中项；false 表示按默认规则重新选中。
+     */
+    void refreshFriendList(bool keepSelection = true);
+
+    /**
+     * @brief 用服务端返回的好友列表刷新中间栏。
+     * @param friends 当前正式好友集合。
+     * @param keepSelection true 表示尽量保留当前选中项。
+     */
+    void updateFriendList(
+        const chatclient::dto::friendship::FriendListItems &friends,
+        bool keepSelection);
+
+    /**
      * @brief 根据当前展示名称更新左上角默认头像文本。
      * @param displayName 当前登录用户展示名。
      */
@@ -164,6 +182,18 @@ class ChatWindow : public QWidget
      * @param image 服务端返回的头像图片。
      */
     void updateProfileAvatarImage(const QImage &image);
+
+    /**
+     * @brief 根据当前好友名称更新右侧详情区默认头像文本。
+     * @param displayName 当前选中好友展示名。
+     */
+    void updateFriendDetailAvatar(const QString &displayName);
+
+    /**
+     * @brief 使用图片更新右侧详情区真实头像。
+     * @param image 服务端返回的好友头像图片。
+     */
+    void updateFriendDetailAvatarImage(const QImage &image);
 
     /**
      * @brief 向当前会话追加一条文本消息并滚动到底部。
@@ -199,6 +229,7 @@ class ChatWindow : public QWidget
     QStackedWidget *m_contentStack = nullptr;
     QLabel *m_conversationTitleLabel = nullptr;
     QLabel *m_conversationMetaLabel = nullptr;
+    QLabel *m_friendDetailAvatarLabel = nullptr;
     QLabel *m_friendDetailTitleLabel = nullptr;
     QLabel *m_friendDetailMetaLabel = nullptr;
     QLabel *m_friendDetailHintLabel = nullptr;
@@ -210,11 +241,13 @@ class ChatWindow : public QWidget
     QTextEdit *m_messageEditor = nullptr;
     chatclient::api::UserApiClient *m_userApiClient = nullptr;
     chatclient::service::AuthService *m_authService = nullptr;
+    chatclient::service::FriendService *m_friendService = nullptr;
 
     // 左下角：当前登录用户信息。
     QLabel *m_profileNameLabel = nullptr;
     QLabel *m_profileStatusLabel = nullptr;
     QString m_currentProfileUserId;
     QString m_currentProfileAvatarStorageKey;
+    QString m_currentSelectedFriendUserId;
     bool m_allowClose = false;
 };

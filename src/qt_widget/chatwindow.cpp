@@ -7,6 +7,7 @@
 #include "model/messagemodelregistry.h"
 #include "qt_widget/addfrienddialog.h"
 #include "service/auth_service.h"
+#include "service/friend_service.h"
 #include "view/messagelistview.h"
 
 #include <QAbstractItemView>
@@ -39,6 +40,8 @@ constexpr int kConversationMetaRole = Qt::UserRole + 3;
 constexpr int kFriendNameRole = Qt::UserRole + 4;
 constexpr int kFriendMetaRole = Qt::UserRole + 5;
 constexpr int kFriendHintRole = Qt::UserRole + 6;
+constexpr int kFriendUserIdRole = Qt::UserRole + 7;
+constexpr int kFriendAvatarStorageKeyRole = Qt::UserRole + 8;
 
 QString loadChatStyleSheet()
 {
@@ -234,6 +237,79 @@ void ChatWindow::setSessionActionSubmitting(const bool submitting,
 void ChatWindow::setAuthService(chatclient::service::AuthService *authService)
 {
     m_authService = authService;
+
+    if (m_friendService)
+    {
+        m_friendService->deleteLater();
+        m_friendService = nullptr;
+    }
+
+    if (!m_authService)
+    {
+        return;
+    }
+
+    m_friendService = new chatclient::service::FriendService(m_authService, this);
+    connect(m_friendService,
+            &chatclient::service::FriendService::friendsStarted,
+            this,
+            [this]() {
+                if (m_friendList)
+                {
+                    m_friendList->setEnabled(false);
+                    m_friendList->clear();
+                    auto *loadingItem = new QListWidgetItem(
+                        QStringLiteral("正在加载好友列表..."),
+                        m_friendList);
+                    loadingItem->setFlags(Qt::NoItemFlags);
+                }
+                if (m_friendDetailTitleLabel)
+                {
+                    m_friendDetailTitleLabel->setText(QStringLiteral("好友"));
+                }
+                if (m_friendDetailMetaLabel)
+                {
+                    m_friendDetailMetaLabel->setText(QStringLiteral("同步中"));
+                }
+                if (m_friendDetailHintLabel)
+                {
+                    m_friendDetailHintLabel->setText(
+                        QStringLiteral("正在从服务端刷新当前账号的好友列表。"));
+                }
+            });
+    connect(m_friendService,
+            &chatclient::service::FriendService::friendsSucceeded,
+            this,
+            [this](const chatclient::dto::friendship::FriendListItems &friends) {
+                updateFriendList(friends, true);
+            });
+    connect(m_friendService,
+            &chatclient::service::FriendService::friendsFailed,
+            this,
+            [this](const QString &message) {
+                if (m_friendList)
+                {
+                    m_friendList->setEnabled(true);
+                    m_friendList->clear();
+                    auto *errorItem = new QListWidgetItem(message, m_friendList);
+                    errorItem->setFlags(Qt::NoItemFlags);
+                }
+                m_currentSelectedFriendUserId.clear();
+                if (m_friendDetailTitleLabel)
+                {
+                    m_friendDetailTitleLabel->setText(QStringLiteral("好友"));
+                }
+                if (m_friendDetailMetaLabel)
+                {
+                    m_friendDetailMetaLabel->setText(QStringLiteral("加载失败"));
+                }
+                if (m_friendDetailHintLabel)
+                {
+                    m_friendDetailHintLabel->setText(message);
+                }
+            });
+
+    refreshFriendList(false);
 }
 
 void ChatWindow::allowWindowClose()
@@ -479,31 +555,9 @@ QWidget *ChatWindow::createFriendsPage()
     m_friendList->setObjectName(QStringLiteral("entityList"));
     m_friendList->setSelectionMode(QAbstractItemView::SingleSelection);
 
-    auto *lihua = createRichListItem(QStringLiteral("李华"),
-                                     QStringLiteral("产品经理 · 已添加"),
-                                     m_friendList);
-    lihua->setData(kFriendNameRole, QStringLiteral("李华"));
-    lihua->setData(kFriendMetaRole, QStringLiteral("产品经理 · 上次活跃于 10:42"));
-    lihua->setData(kFriendHintRole,
-                   QStringLiteral("当前只是好友模式骨架，后续这里会接好友资料与发起会话能力。"));
-
-    auto *zhouning = createRichListItem(QStringLiteral("周宁"),
-                                        QStringLiteral("前端开发 · 已添加"),
-                                        m_friendList);
-    zhouning->setData(kFriendNameRole, QStringLiteral("周宁"));
-    zhouning->setData(kFriendMetaRole, QStringLiteral("前端开发 · 项目协作中"));
-    zhouning->setData(kFriendHintRole,
-                      QStringLiteral("后续这里可以补备注名、共同群组和发消息入口。"));
-
-    auto *newRequests = createRichListItem(QStringLiteral("新的朋友"),
-                                           QStringLiteral("1 条待处理申请"),
-                                           m_friendList);
-    newRequests->setData(kFriendNameRole, QStringLiteral("新的朋友"));
-    newRequests->setData(kFriendMetaRole, QStringLiteral("待处理申请 · 需要后续接真实接口"));
-    newRequests->setData(kFriendHintRole,
-                         QStringLiteral("这里后续会接好友申请列表、同意 / 拒绝等操作。"));
-
-    m_friendList->setCurrentRow(0);
+    auto *placeholderItem =
+        new QListWidgetItem(QStringLiteral("正在准备好友列表..."), m_friendList);
+    placeholderItem->setFlags(Qt::NoItemFlags);
     connect(m_friendList,
             &QListWidget::currentItemChanged,
             this,
@@ -633,24 +687,38 @@ QWidget *ChatWindow::createFriendContentPage()
 
     auto *heroCard = new QFrame(panel);
     heroCard->setObjectName(QStringLiteral("friendHeroCard"));
-    auto *heroLayout = new QVBoxLayout(heroCard);
+    auto *heroLayout = new QHBoxLayout(heroCard);
     heroLayout->setContentsMargins(18, 18, 18, 18);
-    heroLayout->setSpacing(6);
+    heroLayout->setSpacing(18);
 
-    m_friendDetailTitleLabel = new QLabel(QStringLiteral("李华"), heroCard);
+    auto *textBlock = new QWidget(heroCard);
+    auto *textLayout = new QVBoxLayout(textBlock);
+    textLayout->setContentsMargins(0, 0, 0, 0);
+    textLayout->setSpacing(6);
+
+    m_friendDetailTitleLabel = new QLabel(QStringLiteral("李华"), textBlock);
     m_friendDetailTitleLabel->setObjectName(QStringLiteral("friendDetailTitle"));
     m_friendDetailMetaLabel =
-        new QLabel(QStringLiteral("产品经理 · 上次活跃于 10:42"), heroCard);
+        new QLabel(QStringLiteral("产品经理 · 上次活跃于 10:42"), textBlock);
     m_friendDetailMetaLabel->setObjectName(QStringLiteral("friendDetailMeta"));
     m_friendDetailHintLabel =
         new QLabel(QStringLiteral("这里后续会接好友资料、申请处理和发起会话能力。"),
-                   heroCard);
+                   textBlock);
     m_friendDetailHintLabel->setObjectName(QStringLiteral("friendDetailHint"));
     m_friendDetailHintLabel->setWordWrap(true);
 
-    heroLayout->addWidget(m_friendDetailTitleLabel);
-    heroLayout->addWidget(m_friendDetailMetaLabel);
-    heroLayout->addWidget(m_friendDetailHintLabel);
+    textLayout->addWidget(m_friendDetailTitleLabel);
+    textLayout->addWidget(m_friendDetailMetaLabel);
+    textLayout->addWidget(m_friendDetailHintLabel);
+
+    m_friendDetailAvatarLabel = new QLabel(QStringLiteral("李华"), heroCard);
+    m_friendDetailAvatarLabel->setObjectName(
+        QStringLiteral("friendDetailAvatar"));
+    m_friendDetailAvatarLabel->setAlignment(Qt::AlignCenter);
+    m_friendDetailAvatarLabel->setFixedSize(88, 88);
+
+    heroLayout->addWidget(textBlock, 1);
+    heroLayout->addWidget(m_friendDetailAvatarLabel, 0, Qt::AlignTop);
 
     auto *actionRow = new QHBoxLayout();
     actionRow->setContentsMargins(0, 0, 0, 0);
@@ -665,26 +733,26 @@ QWidget *ChatWindow::createFriendContentPage()
     actionRow->addWidget(viewProfileButton);
     actionRow->addStretch(1);
 
-    auto *placeholderCard = new QFrame(panel);
-    placeholderCard->setObjectName(QStringLiteral("friendPlaceholderCard"));
-    auto *placeholderLayout = new QVBoxLayout(placeholderCard);
-    placeholderLayout->setContentsMargins(18, 18, 18, 18);
-    placeholderLayout->setSpacing(6);
+    // auto *placeholderCard = new QFrame(panel);
+    // placeholderCard->setObjectName(QStringLiteral("friendPlaceholderCard"));
+    // auto *placeholderLayout = new QVBoxLayout(placeholderCard);
+    // placeholderLayout->setContentsMargins(18, 18, 18, 18);
+    // placeholderLayout->setSpacing(6);
 
-    auto *placeholderTitle = new QLabel(QStringLiteral("好友模式"), placeholderCard);
-    placeholderTitle->setObjectName(QStringLiteral("friendPlaceholderTitle"));
-    auto *placeholderBody = new QLabel(
-        QStringLiteral("当前已经完成左侧导航切换、中间栏切换和“添加好友”独立弹窗骨架。后续这里会继续接好友资料、申请列表和发消息入口。"),
-        placeholderCard);
-    placeholderBody->setObjectName(QStringLiteral("friendPlaceholderBody"));
-    placeholderBody->setWordWrap(true);
+    // auto *placeholderTitle = new QLabel(QStringLiteral("好友模式"), placeholderCard);
+    // placeholderTitle->setObjectName(QStringLiteral("friendPlaceholderTitle"));
+    // auto *placeholderBody = new QLabel(
+    //     QStringLiteral("当前已经完成左侧导航切换、中间栏切换和“添加好友”独立弹窗骨架。后续这里会继续接好友资料、申请列表和发消息入口。"),
+    //     placeholderCard);
+    // placeholderBody->setObjectName(QStringLiteral("friendPlaceholderBody"));
+    // placeholderBody->setWordWrap(true);
 
-    placeholderLayout->addWidget(placeholderTitle);
-    placeholderLayout->addWidget(placeholderBody);
+    //placeholderLayout->addWidget(placeholderTitle);
+    //placeholderLayout->addWidget(placeholderBody);
 
     layout->addWidget(heroCard);
     layout->addLayout(actionRow);
-    layout->addWidget(placeholderCard);
+    //layout->addWidget(placeholderCard);
     layout->addStretch(1);
 
     return panel;
@@ -712,6 +780,7 @@ void ChatWindow::switchSection(const SidebarSection section)
     if (showMessages) {
         handleSessionSelectionChanged();
     } else {
+        refreshFriendList(true);
         handleFriendSelectionChanged();
     }
 }
@@ -756,12 +825,29 @@ void ChatWindow::handleFriendSelectionChanged()
 
     auto *item = m_friendList->currentItem();
     if (item == nullptr) {
+        m_currentSelectedFriendUserId.clear();
+        updateFriendDetailAvatar(QStringLiteral("好友"));
+        if (m_friendDetailTitleLabel) {
+            m_friendDetailTitleLabel->setText(QStringLiteral("好友详情"));
+        }
+        if (m_friendDetailMetaLabel) {
+            m_friendDetailMetaLabel->setText(QStringLiteral("请选择一个好友"));
+        }
+        if (m_friendDetailHintLabel) {
+            m_friendDetailHintLabel->setText(
+                QStringLiteral("这里会展示当前选中好友的资料摘要，以及后续的发消息和查看资料入口。"));
+        }
         return;
     }
 
+    m_currentSelectedFriendUserId =
+        item->data(kFriendUserIdRole).toString();
+    const QString friendName = item->data(kFriendNameRole).toString();
+    const QString friendAvatarStorageKey =
+        item->data(kFriendAvatarStorageKeyRole).toString().trimmed();
+    updateFriendDetailAvatar(friendName);
     if (m_friendDetailTitleLabel) {
-        m_friendDetailTitleLabel->setText(
-            item->data(kFriendNameRole).toString());
+        m_friendDetailTitleLabel->setText(friendName);
     }
     if (m_friendDetailMetaLabel) {
         m_friendDetailMetaLabel->setText(
@@ -771,12 +857,167 @@ void ChatWindow::handleFriendSelectionChanged()
         m_friendDetailHintLabel->setText(
             item->data(kFriendHintRole).toString());
     }
+
+    if (!m_userApiClient || m_currentSelectedFriendUserId.isEmpty() ||
+        friendAvatarStorageKey.isEmpty())
+    {
+        return;
+    }
+
+    const QString expectedUserId = m_currentSelectedFriendUserId;
+    m_userApiClient->downloadUserAvatar(
+        expectedUserId,
+        [this, expectedUserId](const QByteArray &data) {
+            if (expectedUserId != m_currentSelectedFriendUserId)
+            {
+                return;
+            }
+
+            QImage image;
+            if (!image.loadFromData(data))
+            {
+                CHATCLIENT_LOG_WARN("chat.window")
+                    << "failed to decode friend avatar image for user_id="
+                    << expectedUserId;
+                return;
+            }
+
+            updateFriendDetailAvatarImage(image);
+        },
+        [expectedUserId](const chatclient::dto::user::ApiErrorDto &error) {
+            CHATCLIENT_LOG_WARN("chat.window")
+                << "failed to download friend avatar user_id="
+                << expectedUserId
+                << " request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+        });
 }
 
 void ChatWindow::showAddFriendDialog()
 {
     AddFriendDialog dialog(m_authService, this);
     dialog.exec();
+    refreshFriendList(true);
+}
+
+void ChatWindow::refreshFriendList(const bool keepSelection)
+{
+    if (!m_friendService) {
+        return;
+    }
+
+    if (!keepSelection) {
+        m_currentSelectedFriendUserId.clear();
+    }
+
+    QString errorMessage;
+    if (!m_friendService->fetchFriends(&errorMessage) &&
+        !errorMessage.trimmed().isEmpty() && m_friendList)
+    {
+        m_friendList->setEnabled(true);
+        m_friendList->clear();
+        auto *errorItem = new QListWidgetItem(errorMessage, m_friendList);
+        errorItem->setFlags(Qt::NoItemFlags);
+    }
+}
+
+void ChatWindow::updateFriendList(
+    const chatclient::dto::friendship::FriendListItems &friends,
+    bool keepSelection)
+{
+    if (!m_friendList) {
+        return;
+    }
+
+    const QString previousUserId =
+        keepSelection ? m_currentSelectedFriendUserId : QString();
+
+    m_friendList->setEnabled(true);
+    m_friendList->clear();
+
+    if (friends.isEmpty())
+    {
+        auto *emptyItem = new QListWidgetItem(
+            QStringLiteral("当前还没有好友，先去添加一个吧"),
+            m_friendList);
+        emptyItem->setFlags(Qt::NoItemFlags);
+        m_currentSelectedFriendUserId.clear();
+        handleFriendSelectionChanged();
+        return;
+    }
+
+    int targetRow = -1;
+    for (int index = 0; index < friends.size(); ++index)
+    {
+        const auto &friendItem = friends.at(index);
+        auto *item = createRichListItem(
+            friendItem.user.nickname,
+            QStringLiteral("账号：%1").arg(friendItem.user.account),
+            m_friendList);
+        item->setData(kFriendUserIdRole, friendItem.user.userId);
+        item->setData(kFriendNameRole, friendItem.user.nickname);
+        item->setData(kFriendAvatarStorageKeyRole, friendItem.user.avatarUrl);
+        item->setData(
+            kFriendMetaRole,
+            QStringLiteral("账号：%1 · 用户 ID：%2")
+                .arg(friendItem.user.account, friendItem.user.userId));
+        item->setData(
+            kFriendHintRole,
+            QStringLiteral("当前已接入真实好友列表；后续这里可以继续补发消息、备注名和共同群组。"));
+
+        if (!previousUserId.isEmpty() &&
+            previousUserId == friendItem.user.userId)
+        {
+            targetRow = index;
+        }
+    }
+
+    if (targetRow < 0) {
+        targetRow = 0;
+    }
+
+    m_friendList->setCurrentRow(targetRow);
+    handleFriendSelectionChanged();
+}
+
+void ChatWindow::updateFriendDetailAvatar(const QString &displayName)
+{
+    if (!m_friendDetailAvatarLabel)
+    {
+        return;
+    }
+
+    const QString trimmedName = displayName.trimmed();
+    const QString fallbackText = trimmedName.isEmpty()
+                                     ? QStringLiteral("好友")
+                                     : trimmedName.left(2);
+    m_friendDetailAvatarLabel->setPixmap(QPixmap());
+    m_friendDetailAvatarLabel->setText(fallbackText);
+    m_friendDetailAvatarLabel->setToolTip(trimmedName);
+}
+
+void ChatWindow::updateFriendDetailAvatarImage(const QImage &image)
+{
+    if (!m_friendDetailAvatarLabel)
+    {
+        return;
+    }
+
+    const QPixmap avatarPixmap =
+        createRoundedAvatarPixmap(image, m_friendDetailAvatarLabel->size());
+    if (avatarPixmap.isNull())
+    {
+        return;
+    }
+
+    m_friendDetailAvatarLabel->setPixmap(avatarPixmap);
+    m_friendDetailAvatarLabel->setText(QString());
 }
 
 void ChatWindow::appendMessage(const QString &author,

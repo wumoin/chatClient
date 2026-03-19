@@ -55,12 +55,32 @@ struct FriendRequestItemDto
 using FriendRequestItems = QList<FriendRequestItemDto>;
 
 /**
+ * @brief 正式好友列表项 DTO。
+ */
+struct FriendListItemDto
+{
+    FriendUserDto user;
+    qint64 createdAtMs = 0;
+};
+
+using FriendListItems = QList<FriendListItemDto>;
+
+/**
  * @brief 已发送或已收到好友申请列表响应 DTO。
  */
 struct FriendRequestListResponseDto
 {
     QString requestId;
     FriendRequestItems requests;
+};
+
+/**
+ * @brief 好友列表响应 DTO。
+ */
+struct FriendListResponseDto
+{
+    QString requestId;
+    FriendListItems friends;
 };
 
 /**
@@ -114,6 +134,17 @@ bool parseFriendRequestListSuccessResponse(
     QString *errorMessage);
 
 /**
+ * @brief 解析好友列表成功响应。
+ * @param root 服务端响应根 JSON 对象。
+ * @param out 成功时写入解析后的 DTO。
+ * @param errorMessage 解析失败时写入原因，可为空。
+ * @return true 表示解析成功；false 表示响应结构不符合当前协议。
+ */
+bool parseFriendListSuccessResponse(const QJsonObject &root,
+                                    FriendListResponseDto *out,
+                                    QString *errorMessage);
+
+/**
  * @brief 解析发送好友申请成功响应。
  * @param root 服务端响应根 JSON 对象。
  * @param out 成功时写入解析后的 DTO。
@@ -141,3 +172,5 @@ ApiErrorDto parseApiErrorResponse(const QJsonObject &root,
 Q_DECLARE_METATYPE(chatclient::dto::friendship::SearchUserResponseDto)
 Q_DECLARE_METATYPE(chatclient::dto::friendship::FriendRequestItemDto)
 Q_DECLARE_METATYPE(chatclient::dto::friendship::FriendRequestItems)
+Q_DECLARE_METATYPE(chatclient::dto::friendship::FriendListItemDto)
+Q_DECLARE_METATYPE(chatclient::dto::friendship::FriendListItems)

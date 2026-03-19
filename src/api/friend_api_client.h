@@ -32,6 +32,10 @@ class FriendApiClient : public QObject
         const chatclient::dto::friendship::FriendRequestListResponseDto &)>;
     using FriendRequestListFailureHandler =
         std::function<void(const chatclient::dto::friendship::ApiErrorDto &)>;
+    using FriendListSuccessHandler =
+        std::function<void(const chatclient::dto::friendship::FriendListResponseDto &)>;
+    using FriendListFailureHandler =
+        std::function<void(const chatclient::dto::friendship::ApiErrorDto &)>;
     using SendFriendRequestSuccessHandler = std::function<void(
         const chatclient::dto::friendship::SendFriendRequestResponseDto &)>;
     using SendFriendRequestFailureHandler =
@@ -64,6 +68,16 @@ class FriendApiClient : public QObject
     void fetchOutgoingRequests(const QString &accessToken,
                                FriendRequestListSuccessHandler onSuccess,
                                FriendRequestListFailureHandler onFailure);
+
+    /**
+     * @brief 查询当前用户的正式好友列表。
+     * @param accessToken 当前登录态 access token。
+     * @param onSuccess 成功回调。
+     * @param onFailure 失败回调。
+     */
+    void fetchFriends(const QString &accessToken,
+                      FriendListSuccessHandler onSuccess,
+                      FriendListFailureHandler onFailure);
 
     /**
      * @brief 查询当前用户收到的好友申请列表。

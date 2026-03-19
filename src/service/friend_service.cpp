@@ -22,6 +22,10 @@ FriendService::FriendService(AuthService *authService, QObject *parent)
         "chatclient::dto::friendship::FriendRequestItemDto");
     qRegisterMetaType<chatclient::dto::friendship::FriendRequestItems>(
         "chatclient::dto::friendship::FriendRequestItems");
+    qRegisterMetaType<chatclient::dto::friendship::FriendListItemDto>(
+        "chatclient::dto::friendship::FriendListItemDto");
+    qRegisterMetaType<chatclient::dto::friendship::FriendListItems>(
+        "chatclient::dto::friendship::FriendListItems");
 }
 
 bool FriendService::searchUser(const QString &account, QString *errorMessage)
@@ -139,6 +143,58 @@ bool FriendService::fetchOutgoingRequests(QString *errorMessage)
             emit outgoingRequestsFailed(localizedMessage.isEmpty()
                                             ? QStringLiteral("获取已发送申请失败，请稍后重试")
                                             : localizedMessage);
+        });
+
+    return true;
+}
+
+bool FriendService::fetchFriends(QString *errorMessage)
+{
+    if (m_loadingFriends)
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("好友列表正在刷新，请稍候");
+        }
+        return false;
+    }
+
+    QString accessToken;
+    if (!resolveActiveSession(&accessToken, nullptr, errorMessage))
+    {
+        return false;
+    }
+
+    m_loadingFriends = true;
+    emit friendsStarted();
+    CHATCLIENT_LOG_INFO("friend.service") << "fetch friends started";
+
+    m_friendApiClient.fetchFriends(
+        accessToken,
+        [this](const chatclient::dto::friendship::FriendListResponseDto &response) {
+            m_loadingFriends = false;
+            CHATCLIENT_LOG_INFO("friend.service")
+                << "fetch friends completed request_id="
+                << response.requestId
+                << " count="
+                << response.friends.size();
+            emit friendsSucceeded(response.friends);
+        },
+        [this](const chatclient::dto::friendship::ApiErrorDto &error) {
+            m_loadingFriends = false;
+            CHATCLIENT_LOG_WARN("friend.service")
+                << "fetch friends failed request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+            const QString localizedMessage = localizeFriendError(error);
+            emit friendsFailed(localizedMessage.isEmpty()
+                                   ? QStringLiteral("获取好友列表失败，请稍后重试")
+                                   : localizedMessage);
         });
 
     return true;
@@ -428,6 +484,11 @@ bool FriendService::isSearching() const
 bool FriendService::isLoadingOutgoingRequests() const
 {
     return m_loadingOutgoingRequests;
+}
+
+bool FriendService::isLoadingFriends() const
+{
+    return m_loadingFriends;
 }
 
 bool FriendService::isLoadingIncomingRequests() const

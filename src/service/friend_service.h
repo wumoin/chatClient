@@ -14,8 +14,9 @@ class AuthService;
  *
  * 当前只先承接添加好友弹窗需要的最小链路：
  * 1) 用当前 access token 搜索指定账号；
- * 2) 拉取我发出的好友申请列表；
- * 3) 发送新的好友申请。
+ * 2) 拉取正式好友列表；
+ * 3) 拉取我发出的好友申请列表；
+ * 4) 发送新的好友申请。
  */
 class FriendService : public QObject
 {
@@ -43,6 +44,13 @@ class FriendService : public QObject
      * @return true 表示请求已发出；false 表示本地校验失败或已有请求在进行中。
      */
     bool fetchOutgoingRequests(QString *errorMessage = nullptr);
+
+    /**
+     * @brief 拉取当前正式好友列表。
+     * @param errorMessage 本地校验失败时写入错误消息，可为空。
+     * @return true 表示请求已发出；false 表示本地校验失败或已有请求在进行中。
+     */
+    bool fetchFriends(QString *errorMessage = nullptr);
 
     /**
      * @brief 拉取我收到的好友申请列表。
@@ -93,6 +101,12 @@ class FriendService : public QObject
     bool isLoadingOutgoingRequests() const;
 
     /**
+     * @brief 判断当前是否正在拉取好友列表。
+     * @return true 表示拉取仍在进行中；false 表示当前空闲。
+     */
+    bool isLoadingFriends() const;
+
+    /**
      * @brief 判断当前是否正在拉取我收到的申请列表。
      * @return true 表示拉取仍在进行中；false 表示当前空闲。
      */
@@ -133,6 +147,24 @@ class FriendService : public QObject
      * @brief 已开始拉取我发出的申请列表。
      */
     void outgoingRequestsStarted();
+
+    /**
+     * @brief 已开始拉取好友列表。
+     */
+    void friendsStarted();
+
+    /**
+     * @brief 正式好友列表拉取成功。
+     * @param friends 当前好友集合。
+     */
+    void friendsSucceeded(
+        const chatclient::dto::friendship::FriendListItems &friends);
+
+    /**
+     * @brief 正式好友列表拉取失败。
+     * @param message 可直接展示给用户的错误提示。
+     */
+    void friendsFailed(const QString &message);
 
     /**
      * @brief 我发出的好友申请列表拉取成功。
@@ -216,6 +248,7 @@ class FriendService : public QObject
     AuthService *m_authService = nullptr;
     chatclient::api::FriendApiClient m_friendApiClient;
     bool m_searching = false;
+    bool m_loadingFriends = false;
     bool m_loadingOutgoingRequests = false;
     bool m_loadingIncomingRequests = false;
     bool m_sendingRequest = false;

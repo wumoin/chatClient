@@ -99,6 +99,11 @@ QUrl AppConfig::userSearchUrl(const QString &account) const
     return url;
 }
 
+QUrl AppConfig::friendListUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(friendListPath_));
+}
+
 QUrl AppConfig::friendSendRequestUrl() const
 {
     return httpBaseUrl_.resolved(QUrl(friendSendRequestPath_));
@@ -294,6 +299,10 @@ bool AppConfig::load(QString *errorMessage)
         !readRequiredString(httpValue.toObject(),
                             QStringLiteral("user_search_path"),
                             &userSearchPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("friend_list_path"),
+                            &friendListPath_,
                             errorMessage) ||
         !readRequiredString(httpValue.toObject(),
                             QStringLiteral("friend_send_request_path"),

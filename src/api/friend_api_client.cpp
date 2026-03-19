@@ -247,6 +247,116 @@ void FriendApiClient::fetchOutgoingRequests(
             });
 }
 
+void FriendApiClient::fetchFriends(const QString &accessToken,
+                                   FriendListSuccessHandler onSuccess,
+                                   FriendListFailureHandler onFailure)
+{
+    const QString requestId = createRequestId(QStringLiteral("friend_list"));
+    const QUrl url = chatclient::config::AppConfig::instance().friendListUrl();
+
+    CHATCLIENT_LOG_INFO("friend.api")
+        << "fetching friends request_id="
+        << requestId
+        << " url="
+        << url.toString();
+
+    QNetworkRequest networkRequest(url);
+    applyRequestHeaders(&networkRequest, requestId);
+    applyAuthorizationHeader(&networkRequest, accessToken);
+
+    QNetworkReply *reply = m_networkAccessManager->get(networkRequest);
+    connect(reply,
+            &QNetworkReply::finished,
+            this,
+            [reply,
+             requestId,
+             onSuccess = std::move(onSuccess),
+             onFailure = std::move(onFailure)]() mutable {
+                const int httpStatus =
+                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+                        .toInt();
+                const QByteArray responseBody = reply->readAll();
+                const QString fallbackMessage =
+                    reply->error() == QNetworkReply::NoError
+                        ? QStringLiteral("服务端返回了无法识别的好友列表响应")
+                        : reply->errorString();
+
+                QJsonParseError parseError;
+                const QJsonDocument document =
+                    QJsonDocument::fromJson(responseBody, &parseError);
+                const bool hasJsonObject =
+                    parseError.error == QJsonParseError::NoError &&
+                    document.isObject();
+
+                if (httpStatus >= 200 && httpStatus < 300 && hasJsonObject)
+                {
+                    chatclient::dto::friendship::FriendListResponseDto response;
+                    QString errorMessage;
+                    if (chatclient::dto::friendship::parseFriendListSuccessResponse(
+                            document.object(), &response, &errorMessage))
+                    {
+                        if (response.requestId.isEmpty())
+                        {
+                            response.requestId = requestId;
+                        }
+
+                        CHATCLIENT_LOG_INFO("friend.api")
+                            << "friends fetched request_id="
+                            << response.requestId
+                            << " count="
+                            << response.friends.size();
+
+                        if (onSuccess)
+                        {
+                            onSuccess(response);
+                        }
+
+                        reply->deleteLater();
+                        return;
+                    }
+
+                    if (onFailure)
+                    {
+                        chatclient::dto::friendship::ApiErrorDto error;
+                        error.httpStatus = httpStatus;
+                        error.errorCode = 50000;
+                        error.requestId = requestId;
+                        error.message = errorMessage.isEmpty()
+                                            ? fallbackMessage
+                                            : errorMessage;
+                        onFailure(error);
+                    }
+
+                    reply->deleteLater();
+                    return;
+                }
+
+                if (onFailure)
+                {
+                    if (hasJsonObject)
+                    {
+                        auto error = chatclient::dto::friendship::parseApiErrorResponse(
+                            document.object(), httpStatus, fallbackMessage);
+                        if (error.requestId.isEmpty())
+                        {
+                            error.requestId = requestId;
+                        }
+                        onFailure(error);
+                    }
+                    else
+                    {
+                        chatclient::dto::friendship::ApiErrorDto error;
+                        error.httpStatus = httpStatus;
+                        error.requestId = requestId;
+                        error.message = fallbackMessage;
+                        onFailure(error);
+                    }
+                }
+
+                reply->deleteLater();
+            });
+}
+
 void FriendApiClient::fetchIncomingRequests(
     const QString &accessToken,
     FriendRequestListSuccessHandler onSuccess,

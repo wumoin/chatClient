@@ -330,6 +330,15 @@ QLabel#friendPlaceholderTitle {
     font-weight: 700;
 }
 
+QLabel#friendDetailAvatar {
+    background: #e7f0ff;
+    border: 1px solid #d4e1f6;
+    border-radius: 44px;
+    color: #234b80;
+    font-size: 20px;
+    font-weight: 700;
+}
+
 QLabel#friendDetailMeta {
     color: #6282a7;
     font-size: 12px;

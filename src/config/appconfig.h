@@ -98,6 +98,12 @@ public:
     QUrl userSearchUrl(const QString &account) const;
 
     /**
+     * @brief 返回好友列表接口完整地址。
+     * @return 解析 `base_url + friend_list_path` 后得到的完整 URL。
+     */
+    QUrl friendListUrl() const;
+
+    /**
      * @brief 返回发送好友申请接口完整地址。
      * @return 解析 `base_url + friend_send_request_path` 后得到的完整 URL。
      */
@@ -260,6 +266,7 @@ private:
     QString avatarTempUploadPath_;
     QString userAvatarPathTemplate_;
     QString userSearchPath_;
+    QString friendListPath_;
     QString friendSendRequestPath_;
     QString friendOutgoingRequestsPath_;
     QString friendIncomingRequestsPath_;
