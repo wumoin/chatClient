@@ -15,7 +15,8 @@ struct RegisterRequestDto
     QString account;
     QString password;
     QString nickname;
-    QString avatarUrl;
+    // 服务端临时头像上传接口返回的确认 key，可为空。
+    QString avatarUploadKey;
 };
 
 /**

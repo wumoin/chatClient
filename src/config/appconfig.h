@@ -78,6 +78,19 @@ public:
     QUrl logoutUrl() const;
 
     /**
+     * @brief 返回临时头像上传接口完整地址。
+     * @return 解析 `base_url + avatar_temp_upload_path` 后得到的完整上传 URL。
+     */
+    QUrl avatarTempUploadUrl() const;
+
+    /**
+     * @brief 返回指定用户头像文件接口完整地址。
+     * @param userId 目标用户 ID。
+     * @return 将路径模板中的 `{user_id}` 替换后得到的完整头像 URL。
+     */
+    QUrl userAvatarUrl(const QString &userId) const;
+
+    /**
      * @brief 返回 WebSocket 服务地址。
      * @return WebSocket 完整 URL。
      */
@@ -205,6 +218,8 @@ private:
     QString registerPath_;
     QString loginPath_;
     QString logoutPath_;
+    QString avatarTempUploadPath_;
+    QString userAvatarPathTemplate_;
     QUrl webSocketUrl_;
     QString logAppName_;
     QString logMinimumLevel_ = QStringLiteral("INFO");

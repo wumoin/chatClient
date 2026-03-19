@@ -9,7 +9,9 @@
             "base_url": "http://127.0.0.1:8848",
             "register_path": "/api/v1/auth/register",
             "login_path": "/api/v1/auth/login",
-            "logout_path": "/api/v1/auth/logout"
+            "logout_path": "/api/v1/auth/logout",
+            "avatar_temp_upload_path": "/api/v1/users/avatar/temp",
+            "user_avatar_path_template": "/api/v1/users/{user_id}/avatar"
         },
         "ws": {
             "url": "ws://127.0.0.1:8848/ws"

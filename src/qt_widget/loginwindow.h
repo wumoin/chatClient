@@ -19,6 +19,10 @@ namespace chatclient::service {
 class AuthService;
 }
 
+namespace chatclient::api {
+class UserApiClient;
+}
+
 // 登录窗口：使用 QWidget 作为顶层容器，负责组织登录界面的控件与布局。
 class LoginWindow : public QWidget
 {
@@ -134,6 +138,10 @@ private:
      */
     void handleRegisterSubmit();
     /**
+     * @brief 选择并上传注册头像。
+     */
+    void handleRegisterAvatarSelect();
+    /**
      * @brief 处理注册成功结果。
      * @param user 服务端返回的新用户信息。
      */
@@ -166,6 +174,23 @@ private:
      * @param tone 当前提示语气，例如信息、成功或错误。
      */
     void setRegisterStatusMessage(const QString &message, StatusTone tone);
+
+    /**
+     * @brief 设置注册头像上传中的忙碌状态。
+     * @param uploading true 表示头像上传中；false 表示恢复可操作。
+     */
+    void setRegisterAvatarUploading(bool uploading);
+
+    /**
+     * @brief 重置注册头像相关状态与预览。
+     */
+    void resetRegisterAvatarState();
+
+    /**
+     * @brief 根据图片更新注册页头像预览。
+     * @param image 目标头像图片。
+     */
+    void setRegisterAvatarPreview(const QImage &image);
 
     /**
      * @brief 打开聊天窗口并把当前登录用户信息灌入界面。
@@ -213,6 +238,12 @@ private:
     QLineEdit *m_registerPasswordEdit = nullptr;
     // 注册页输入框：确认密码。
     QLineEdit *m_registerConfirmEdit = nullptr;
+    // 注册页头像预览：显示当前待注册头像。
+    QLabel *m_registerAvatarPreviewLabel = nullptr;
+    // 注册页头像操作提示：显示“未设置 / 上传中 / 已上传”等状态。
+    QLabel *m_registerAvatarHintLabel = nullptr;
+    // 注册页头像选择按钮：打开本地文件选择并触发临时上传。
+    QPushButton *m_registerAvatarSelectButton = nullptr;
     // 注册页状态提示：显示“注册中 / 成功 / 失败”等反馈。
     QLabel *m_registerStatusLabel = nullptr;
     // 注册页主按钮：提交注册。
@@ -221,6 +252,8 @@ private:
     QPushButton *m_backToLoginButton = nullptr;
     // 认证业务服务：负责注册 / 登录请求校验与 HTTP 调用。
     chatclient::service::AuthService *m_authService = nullptr;
+    // 用户接口客户端：负责临时头像上传。
+    chatclient::api::UserApiClient *m_userApiClient = nullptr;
     // 聊天窗口：登录成功后展示。
     ChatWindow *m_chatWindow = nullptr;
 
@@ -228,4 +261,6 @@ private:
     bool m_dragging = false;
     QPoint m_dragOffset;
     bool m_applicationShutdownInProgress = false;
+    bool m_registerAvatarUploading = false;
+    QString m_registerAvatarUploadKey;
 };

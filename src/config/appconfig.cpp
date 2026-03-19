@@ -77,6 +77,18 @@ QUrl AppConfig::logoutUrl() const
     return httpBaseUrl_.resolved(QUrl(logoutPath_));
 }
 
+QUrl AppConfig::avatarTempUploadUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(avatarTempUploadPath_));
+}
+
+QUrl AppConfig::userAvatarUrl(const QString &userId) const
+{
+    QString resolvedPath = userAvatarPathTemplate_;
+    resolvedPath.replace(QStringLiteral("{user_id}"), userId);
+    return httpBaseUrl_.resolved(QUrl(resolvedPath));
+}
+
 const QUrl &AppConfig::webSocketUrl() const
 {
     return webSocketUrl_;
@@ -232,6 +244,14 @@ bool AppConfig::load(QString *errorMessage)
                             QStringLiteral("logout_path"),
                             &logoutPath_,
                             errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("avatar_temp_upload_path"),
+                            &avatarTempUploadPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("user_avatar_path_template"),
+                            &userAvatarPathTemplate_,
+                            errorMessage) ||
         !readRequiredString(wsValue.toObject(),
                             QStringLiteral("url"),
                             &webSocketUrlText,
@@ -322,13 +342,26 @@ bool AppConfig::load(QString *errorMessage)
 
     if (!registerPath_.startsWith(QLatin1Char('/')) ||
         !loginPath_.startsWith(QLatin1Char('/')) ||
-        !logoutPath_.startsWith(QLatin1Char('/')))
+        !logoutPath_.startsWith(QLatin1Char('/')) ||
+        !avatarTempUploadPath_.startsWith(QLatin1Char('/')) ||
+        !userAvatarPathTemplate_.startsWith(QLatin1Char('/')))
     {
         if (errorMessage)
         {
             *errorMessage =
                 QStringLiteral(
-                    "register_path、login_path 和 logout_path 必须以 / 开头");
+                    "register_path、login_path、logout_path、avatar_temp_upload_path 和 user_avatar_path_template 必须以 / 开头");
+        }
+        return false;
+    }
+
+    if (!userAvatarPathTemplate_.contains(QStringLiteral("{user_id}")))
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral(
+                    "user_avatar_path_template 必须包含 {user_id} 占位符");
         }
         return false;
     }

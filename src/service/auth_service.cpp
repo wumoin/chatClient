@@ -59,6 +59,7 @@ bool AuthService::registerUser(const QString &account,
                                const QString &nickname,
                                const QString &password,
                                const QString &confirmPassword,
+                               const QString &avatarUploadKey,
                                QString *errorMessage)
 {
     if (m_registering)
@@ -77,6 +78,7 @@ bool AuthService::registerUser(const QString &account,
                               nickname,
                               password,
                               confirmPassword,
+                              avatarUploadKey,
                               &request,
                               errorMessage))
     {
@@ -353,6 +355,7 @@ bool AuthService::buildRegisterRequest(
     const QString &nickname,
     const QString &password,
     const QString &confirmPassword,
+    const QString &avatarUploadKey,
     chatclient::dto::auth::RegisterRequestDto *out,
     QString *errorMessage)
 {
@@ -442,7 +445,7 @@ bool AuthService::buildRegisterRequest(
         out->account = account;
         out->nickname = trimmedNickname;
         out->password = password;
-        out->avatarUrl.clear();
+        out->avatarUploadKey = avatarUploadKey.trimmed();
     }
 
     return true;

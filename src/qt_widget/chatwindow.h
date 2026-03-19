@@ -4,6 +4,7 @@
 #include <QWidget>
 
 class QCloseEvent;
+class QImage;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -13,13 +14,17 @@ class QTextEdit;
 class MessageListView;
 class MessageModelRegistry;
 
+namespace chatclient::api {
+class UserApiClient;
+}
+
 // ChatWindow 当前承担“聊天主界面骨架”职责：
 // 1) 构建左侧导航栏、中间列表栏、右侧详情区三段式布局；
 // 2) 提供“消息 / 好友”两种主模式切换；
 // 3) 保留现有消息演示链路，并为后续好友能力预留独立入口。
 //
 // 注意：
-// - 这里仍然不处理真实网络请求；
+// - 当前除左上角头像加载外，这里仍然不处理真实业务网络请求；
 // - 会话列表当前继续使用 QListWidget；
 // - “添加好友”当前只完成独立弹窗骨架，业务提交后续再接 service。
 class ChatWindow : public QWidget
@@ -37,9 +42,13 @@ class ChatWindow : public QWidget
      * @brief 设置当前登录用户的展示信息。
      * @param displayName 界面展示名称。
      * @param statusText 当前状态文本。
+     * @param userId 当前登录用户 ID，可为空。
+     * @param avatarStorageKey 当前用户头像 storage key，可为空。
      */
     void setCurrentUserProfile(const QString &displayName,
-                               const QString &statusText);
+                               const QString &statusText,
+                               const QString &userId = QString(),
+                               const QString &avatarStorageKey = QString());
 
     /**
      * @brief 切换左侧账号动作按钮的忙碌状态。
@@ -141,6 +150,12 @@ class ChatWindow : public QWidget
     void updateProfileAvatar(const QString &displayName);
 
     /**
+     * @brief 使用图片更新左上角真实头像。
+     * @param image 服务端返回的头像图片。
+     */
+    void updateProfileAvatarImage(const QImage &image);
+
+    /**
      * @brief 向当前会话追加一条文本消息并滚动到底部。
      * @param author 发送者名称。
      * @param text 消息正文。
@@ -183,9 +198,12 @@ class ChatWindow : public QWidget
     MessageModelRegistry *m_messageModelRegistry = nullptr;
     QString m_currentConversationId;
     QTextEdit *m_messageEditor = nullptr;
+    chatclient::api::UserApiClient *m_userApiClient = nullptr;
 
     // 左下角：当前登录用户信息。
     QLabel *m_profileNameLabel = nullptr;
     QLabel *m_profileStatusLabel = nullptr;
+    QString m_currentProfileUserId;
+    QString m_currentProfileAvatarStorageKey;
     bool m_allowClose = false;
 };

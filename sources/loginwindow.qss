@@ -21,6 +21,15 @@ QLabel#authStatusLabel[statusTone="success"] {
 QLabel#authStatusLabel[statusTone="error"] {
     color: #d13b3b;
 }
+QLabel#avatarHintLabel[statusTone="info"] {
+    color: #6f7782;
+}
+QLabel#avatarHintLabel[statusTone="success"] {
+    color: #0f9f5f;
+}
+QLabel#avatarHintLabel[statusTone="error"] {
+    color: #d13b3b;
+}
 
 /* 自定义标题栏与窗口控制按钮。 */
 QWidget#titleBar {
@@ -47,6 +56,40 @@ QFrame[panel="card"] {
     background: #ffffff;
     border: 1px solid #e6e6e6;
     border-radius: 12px;
+}
+
+QLabel#avatarPickerPreview {
+    background: #f4f7fb;
+    border: 1px dashed #cbd5e1;
+    border-radius: 36px;
+    color: #6f7782;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QPushButton#avatarPickerButton {
+    background: #edf3fe;
+    border: 1px solid #d4e0f6;
+    border-radius: 8px;
+    color: #2a4f83;
+    min-height: 36px;
+    padding: 0 12px;
+}
+QPushButton#avatarPickerButton:hover {
+    background: #e2ecfd;
+}
+QPushButton#avatarPickerButton:pressed {
+    background: #d7e4fb;
+}
+QPushButton#avatarPickerButton:disabled {
+    background: #f1f4f9;
+    border: 1px solid #dbe4f1;
+    color: #97a7bd;
+}
+
+QLabel#avatarHintLabel {
+    color: #6f7782;
+    font-size: 12px;
 }
 
 /* 输入框：圆角、浅色边框与聚焦高亮。 */

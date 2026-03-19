@@ -56,9 +56,10 @@ QJsonObject toJsonObject(const RegisterRequestDto &request)
     object.insert(QStringLiteral("password"), request.password);
     object.insert(QStringLiteral("nickname"), request.nickname);
 
-    if (!request.avatarUrl.isEmpty())
+    if (!request.avatarUploadKey.isEmpty())
     {
-        object.insert(QStringLiteral("avatar_url"), request.avatarUrl);
+        object.insert(QStringLiteral("avatar_upload_key"),
+                      request.avatarUploadKey);
     }
 
     return object;

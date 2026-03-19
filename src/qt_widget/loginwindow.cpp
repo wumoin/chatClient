@@ -1,21 +1,27 @@
 #include "loginwindow.h"
 
+#include "api/user_api_client.h"
 #include "config/appconfig.h"
 #include "log/app_logger.h"
 #include "qt_widget/chatwindow.h"
 #include "service/auth_service.h"
+#include "service/user_error_localizer.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QFileDialog>
 #include <QFile>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QStyle>
@@ -37,15 +43,39 @@ static QString loadGlobalStyle()
     return QString::fromUtf8(file.readAll());
 }
 
+static QPixmap createRoundedAvatarPixmap(const QImage &image, const QSize &size)
+{
+    if (image.isNull() || !size.isValid())
+    {
+        return QPixmap();
+    }
+
+    const QImage scaledImage = image.scaled(size,
+                                            Qt::KeepAspectRatioByExpanding,
+                                            Qt::SmoothTransformation);
+    QPixmap roundedPixmap(size);
+    roundedPixmap.fill(Qt::transparent);
+
+    QPainter painter(&roundedPixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPainterPath path;
+    path.addEllipse(roundedPixmap.rect());
+    painter.setClipPath(path);
+    painter.drawImage(QRect(QPoint(0, 0), size), scaledImage);
+    return roundedPixmap;
+}
+
 LoginWindow::LoginWindow(QWidget *parent)
     : QWidget(parent)
 {
     const auto &config = chatclient::config::AppConfig::instance();
     m_authService = new chatclient::service::AuthService(this);
+    m_userApiClient = new chatclient::api::UserApiClient(this);
 
     // 窗口基础设置：标题与固定尺寸，保证布局稳定。
     setWindowTitle(config.loginWindowTitle());
-    setFixedSize(420, 520);
+    setFixedSize(420, 600);
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
 
@@ -74,6 +104,21 @@ LoginWindow::LoginWindow(QWidget *parent)
     m_stack->addWidget(createLoginPage());
     m_stack->addWidget(createRegisterPage());
     m_stack->setCurrentIndex(0);
+    resetRegisterAvatarState();
+
+    // 显式指定键盘 Tab 焦点顺序，避免新增头像设置区后仍按旧的控件创建顺序跳转。
+    QWidget::setTabOrder(m_accountEdit, m_passwordEdit);
+    QWidget::setTabOrder(m_passwordEdit, m_rememberCheck);
+    QWidget::setTabOrder(m_rememberCheck, m_autoLoginCheck);
+    QWidget::setTabOrder(m_autoLoginCheck, m_loginButton);
+    QWidget::setTabOrder(m_loginButton, m_registerButton);
+
+    QWidget::setTabOrder(m_registerAvatarSelectButton, m_registerAccountEdit);
+    QWidget::setTabOrder(m_registerAccountEdit, m_registerNicknameEdit);
+    QWidget::setTabOrder(m_registerNicknameEdit, m_registerPasswordEdit);
+    QWidget::setTabOrder(m_registerPasswordEdit, m_registerConfirmEdit);
+    QWidget::setTabOrder(m_registerConfirmEdit, m_registerSubmitButton);
+    QWidget::setTabOrder(m_registerSubmitButton, m_backToLoginButton);
 
     // 内容容器：给标题与表单区域提供内边距。
     auto *content = new QWidget(this);
@@ -354,6 +399,29 @@ QWidget *LoginWindow::createRegisterPage()
     m_registerNicknameEdit = new QLineEdit(card);
     m_registerNicknameEdit->setPlaceholderText(QStringLiteral("昵称"));
 
+    // 头像设置区：用户选择图片后会立即调用临时头像上传接口。
+    auto *avatarLayout = new QHBoxLayout();
+    avatarLayout->setSpacing(12);
+
+    m_registerAvatarPreviewLabel = new QLabel(QStringLiteral("头像"), card);
+    m_registerAvatarPreviewLabel->setObjectName(QStringLiteral("avatarPickerPreview"));
+    m_registerAvatarPreviewLabel->setAlignment(Qt::AlignCenter);
+    m_registerAvatarPreviewLabel->setFixedSize(72, 72);
+
+    auto *avatarMetaLayout = new QVBoxLayout();
+    avatarMetaLayout->setSpacing(6);
+    m_registerAvatarSelectButton = new QPushButton(QStringLiteral("设置头像"), card);
+    m_registerAvatarSelectButton->setObjectName(QStringLiteral("avatarPickerButton"));
+    m_registerAvatarHintLabel = new QLabel(QStringLiteral("可选。选择图片后会立即上传临时头像"), card);
+    m_registerAvatarHintLabel->setObjectName(QStringLiteral("avatarHintLabel"));
+    m_registerAvatarHintLabel->setWordWrap(true);
+    avatarMetaLayout->addWidget(m_registerAvatarSelectButton, 0, Qt::AlignLeft);
+    avatarMetaLayout->addWidget(m_registerAvatarHintLabel);
+    avatarMetaLayout->addStretch(1);
+
+    avatarLayout->addWidget(m_registerAvatarPreviewLabel);
+    avatarLayout->addLayout(avatarMetaLayout, 1);
+
     // 密码输入区。
     m_registerPasswordEdit = new QLineEdit(card);
     m_registerPasswordEdit->setPlaceholderText(QStringLiteral("设置登录密码"));
@@ -387,6 +455,8 @@ QWidget *LoginWindow::createRegisterPage()
     backLayout->addWidget(m_backToLoginButton);
 
     // 将注册控件按顺序加入卡片布局。
+    // 头像设置放在第一项，和当前注册需求一致，同时避免中段信息过密。
+    cardLayout->addLayout(avatarLayout);
     cardLayout->addWidget(m_registerAccountEdit);
     cardLayout->addWidget(m_registerNicknameEdit);
     cardLayout->addWidget(m_registerPasswordEdit);
@@ -404,6 +474,10 @@ QWidget *LoginWindow::createRegisterPage()
             &QLineEdit::returnPressed,
             this,
             &LoginWindow::handleRegisterSubmit);
+    connect(m_registerAvatarSelectButton,
+            &QPushButton::clicked,
+            this,
+            &LoginWindow::handleRegisterAvatarSelect);
 
     // 点击“返回登录”时切换回登录页。
     connect(m_backToLoginButton, &QPushButton::clicked, this, &LoginWindow::showLoginPage);
@@ -520,7 +594,10 @@ void LoginWindow::handleSwitchAccountFailed(const QString &message)
                                             : session.user.nickname;
             const QString statusText =
                 QStringLiteral("已登录 · %1").arg(session.account);
-            m_chatWindow->setCurrentUserProfile(displayName, statusText);
+            m_chatWindow->setCurrentUserProfile(displayName,
+                                                statusText,
+                                                session.user.userId,
+                                                session.user.avatarUrl);
         }
         m_chatWindow->setSessionActionSubmitting(false, false);
         QMessageBox::warning(m_chatWindow,
@@ -548,6 +625,91 @@ void LoginWindow::handleSignOutRequested()
     close();
 }
 
+void LoginWindow::handleRegisterAvatarSelect()
+{
+    if (!m_userApiClient || m_registerAvatarUploading)
+    {
+        return;
+    }
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("选择头像"),
+        QString(),
+        QStringLiteral("图片文件 (*.png *.jpg *.jpeg *.bmp *.webp)"));
+    if (filePath.isEmpty())
+    {
+        return;
+    }
+
+    const QImage image(filePath);
+    if (image.isNull())
+    {
+        setRegisterStatusMessage(QStringLiteral("所选文件不是可识别的图片"),
+                                 StatusTone::kError);
+        return;
+    }
+
+    setRegisterAvatarPreview(image);
+    setRegisterAvatarUploading(true);
+    setRegisterStatusMessage(QStringLiteral("正在上传头像..."), StatusTone::kInfo);
+
+    m_userApiClient->uploadTemporaryAvatar(
+        filePath,
+        [this](const chatclient::dto::user::TemporaryAvatarUploadResponseDto &response) {
+            m_registerAvatarUploadKey = response.avatarUploadKey;
+            setRegisterAvatarUploading(false);
+            if (m_registerAvatarHintLabel)
+            {
+                m_registerAvatarHintLabel->setText(QStringLiteral("头像已上传，注册时会一并使用"));
+                m_registerAvatarHintLabel->setProperty("statusTone",
+                                                       QStringLiteral("success"));
+                m_registerAvatarHintLabel->style()->unpolish(m_registerAvatarHintLabel);
+                m_registerAvatarHintLabel->style()->polish(m_registerAvatarHintLabel);
+            }
+
+            CHATCLIENT_LOG_INFO("login.window")
+                << "temporary avatar uploaded request_id="
+                << response.requestId
+                << " avatar_upload_key="
+                << response.avatarUploadKey;
+            setRegisterStatusMessage(QString(), StatusTone::kInfo);
+        },
+        [this](const chatclient::dto::user::ApiErrorDto &error) {
+            setRegisterAvatarUploading(false);
+            m_registerAvatarUploadKey.clear();
+            if (m_registerAvatarSelectButton)
+            {
+                m_registerAvatarSelectButton->setText(QStringLiteral("重新上传头像"));
+            }
+
+            const QString localizedMessage =
+                chatclient::service::localizeUserError(error);
+            const QString message = localizedMessage.isEmpty()
+                                        ? QStringLiteral("头像上传失败，请重新选择图片后再试")
+                                        : localizedMessage;
+            if (m_registerAvatarHintLabel)
+            {
+                m_registerAvatarHintLabel->setText(message);
+                m_registerAvatarHintLabel->setProperty("statusTone",
+                                                       QStringLiteral("error"));
+                m_registerAvatarHintLabel->style()->unpolish(m_registerAvatarHintLabel);
+                m_registerAvatarHintLabel->style()->polish(m_registerAvatarHintLabel);
+            }
+
+            CHATCLIENT_LOG_WARN("login.window")
+                << "temporary avatar upload failed request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+            setRegisterStatusMessage(message, StatusTone::kError);
+        });
+}
+
 void LoginWindow::handleRegisterSubmit()
 {
     if (!m_authService) {
@@ -558,11 +720,19 @@ void LoginWindow::handleRegisterSubmit()
         << "register submit clicked account="
         << (m_registerAccountEdit ? m_registerAccountEdit->text() : QString());
 
+    if (m_registerAvatarUploading)
+    {
+        setRegisterStatusMessage(QStringLiteral("头像仍在上传，请稍候"),
+                                 StatusTone::kInfo);
+        return;
+    }
+
     QString errorMessage;
     if (!m_authService->registerUser(m_registerAccountEdit ? m_registerAccountEdit->text() : QString(),
                                      m_registerNicknameEdit ? m_registerNicknameEdit->text() : QString(),
                                      m_registerPasswordEdit ? m_registerPasswordEdit->text() : QString(),
                                      m_registerConfirmEdit ? m_registerConfirmEdit->text() : QString(),
+                                     m_registerAvatarUploadKey,
                                      &errorMessage)) {
         CHATCLIENT_LOG_WARN("login.window")
             << "register submit rejected message="
@@ -602,6 +772,7 @@ void LoginWindow::handleRegisterSucceeded(
     if (m_registerConfirmEdit) {
         m_registerConfirmEdit->clear();
     }
+    resetRegisterAvatarState();
 
     showLoginPage();
     QMessageBox::information(
@@ -683,11 +854,14 @@ void LoginWindow::setRegisterSubmitting(bool submitting)
     if (m_registerConfirmEdit) {
         m_registerConfirmEdit->setEnabled(!submitting);
     }
+    if (m_registerAvatarSelectButton) {
+        m_registerAvatarSelectButton->setEnabled(!submitting && !m_registerAvatarUploading);
+    }
     if (m_registerSubmitButton) {
-        m_registerSubmitButton->setEnabled(!submitting);
+        m_registerSubmitButton->setEnabled(!submitting && !m_registerAvatarUploading);
     }
     if (m_backToLoginButton) {
-        m_backToLoginButton->setEnabled(!submitting);
+        m_backToLoginButton->setEnabled(!submitting && !m_registerAvatarUploading);
     }
 }
 
@@ -718,6 +892,97 @@ void LoginWindow::setRegisterStatusMessage(const QString &message,
     m_registerStatusLabel->style()->polish(m_registerStatusLabel);
 }
 
+void LoginWindow::setRegisterAvatarUploading(const bool uploading)
+{
+    m_registerAvatarUploading = uploading;
+
+    if (m_registerAvatarSelectButton)
+    {
+        m_registerAvatarSelectButton->setEnabled(!uploading);
+        m_registerAvatarSelectButton->setText(
+            uploading ? QStringLiteral("上传中...")
+                      : (m_registerAvatarUploadKey.isEmpty()
+                             ? QStringLiteral("设置头像")
+                             : QStringLiteral("更换头像")));
+    }
+
+    if (m_registerSubmitButton)
+    {
+        m_registerSubmitButton->setEnabled(!uploading && !m_authService->isRegistering());
+    }
+
+    if (m_backToLoginButton)
+    {
+        m_backToLoginButton->setEnabled(!uploading && !m_authService->isRegistering());
+    }
+
+    if (m_registerAvatarHintLabel && uploading)
+    {
+        m_registerAvatarHintLabel->setText(QStringLiteral("头像上传中，请稍候"));
+        m_registerAvatarHintLabel->setProperty("statusTone",
+                                               QStringLiteral("info"));
+        m_registerAvatarHintLabel->style()->unpolish(m_registerAvatarHintLabel);
+        m_registerAvatarHintLabel->style()->polish(m_registerAvatarHintLabel);
+    }
+}
+
+void LoginWindow::resetRegisterAvatarState()
+{
+    m_registerAvatarUploading = false;
+    m_registerAvatarUploadKey.clear();
+
+    if (m_registerAvatarPreviewLabel)
+    {
+        m_registerAvatarPreviewLabel->clear();
+        m_registerAvatarPreviewLabel->setPixmap(QPixmap());
+        m_registerAvatarPreviewLabel->setText(QStringLiteral("头像"));
+        m_registerAvatarPreviewLabel->setToolTip(QString());
+    }
+
+    if (m_registerAvatarHintLabel)
+    {
+        m_registerAvatarHintLabel->setText(
+            QStringLiteral("可选。选择图片后会立即上传临时头像"));
+        m_registerAvatarHintLabel->setProperty("statusTone",
+                                               QStringLiteral("info"));
+        m_registerAvatarHintLabel->style()->unpolish(m_registerAvatarHintLabel);
+        m_registerAvatarHintLabel->style()->polish(m_registerAvatarHintLabel);
+    }
+
+    if (m_registerAvatarSelectButton)
+    {
+        m_registerAvatarSelectButton->setEnabled(true);
+        m_registerAvatarSelectButton->setText(QStringLiteral("设置头像"));
+    }
+
+    if (m_registerSubmitButton)
+    {
+        m_registerSubmitButton->setEnabled(true);
+    }
+
+    if (m_backToLoginButton)
+    {
+        m_backToLoginButton->setEnabled(true);
+    }
+}
+
+void LoginWindow::setRegisterAvatarPreview(const QImage &image)
+{
+    if (!m_registerAvatarPreviewLabel)
+    {
+        return;
+    }
+
+    const QSize previewSize = m_registerAvatarPreviewLabel->size();
+    const QPixmap roundedPixmap =
+        createRoundedAvatarPixmap(image, previewSize);
+    if (!roundedPixmap.isNull())
+    {
+        m_registerAvatarPreviewLabel->setText(QString());
+        m_registerAvatarPreviewLabel->setPixmap(roundedPixmap);
+    }
+}
+
 void LoginWindow::openChatWindow(
     const chatclient::dto::auth::LoginSessionDto &session)
 {
@@ -738,7 +1003,10 @@ void LoginWindow::openChatWindow(
                                     : session.user.nickname;
     const QString statusText = QStringLiteral("已登录 · %1").arg(session.account);
 
-    m_chatWindow->setCurrentUserProfile(displayName, statusText);
+    m_chatWindow->setCurrentUserProfile(displayName,
+                                        statusText,
+                                        session.user.userId,
+                                        session.user.avatarUrl);
     m_chatWindow->setSessionActionSubmitting(false, false);
     m_chatWindow->show();
     m_chatWindow->raise();

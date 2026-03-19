@@ -33,6 +33,7 @@ public:
      * @param nickname 注册昵称。
      * @param password 登录密码。
      * @param confirmPassword 确认密码。
+     * @param avatarUploadKey 已上传临时头像时返回的确认 key，可为空。
      * @param errorMessage 本地校验失败时写入错误消息，可为空。
      * @return true 表示请求已发出；false 表示本地校验失败或已有请求在进行中。
      */
@@ -40,6 +41,7 @@ public:
                       const QString &nickname,
                       const QString &password,
                       const QString &confirmPassword,
+                      const QString &avatarUploadKey = QString(),
                       QString *errorMessage = nullptr);
 
     /**
@@ -155,6 +157,7 @@ private:
      * @param nickname 昵称原始输入。
      * @param password 密码原始输入。
      * @param confirmPassword 确认密码原始输入。
+     * @param avatarUploadKey 已上传临时头像时返回的确认 key。
      * @param out 成功时写入标准化后的请求 DTO。
      * @param errorMessage 失败时写入错误消息。
      * @return true 表示本地校验通过；false 表示存在非法输入。
@@ -163,6 +166,7 @@ private:
                                      const QString &nickname,
                                      const QString &password,
                                      const QString &confirmPassword,
+                                     const QString &avatarUploadKey,
                                      chatclient::dto::auth::RegisterRequestDto *out,
                                      QString *errorMessage);
 

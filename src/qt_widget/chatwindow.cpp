@@ -1,6 +1,8 @@
 #include "chatwindow.h"
 
+#include "api/user_api_client.h"
 #include "config/appconfig.h"
+#include "log/app_logger.h"
 #include "model/messagemodel.h"
 #include "model/messagemodelregistry.h"
 #include "qt_widget/addfrienddialog.h"
@@ -11,11 +13,15 @@
 #include <QFile>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QPushButton>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -52,12 +58,36 @@ QListWidgetItem *createRichListItem(const QString &title,
     return item;
 }
 
+QPixmap createRoundedAvatarPixmap(const QImage &image, const QSize &size)
+{
+    if (image.isNull() || !size.isValid())
+    {
+        return QPixmap();
+    }
+
+    const QImage scaledImage = image.scaled(size,
+                                            Qt::KeepAspectRatioByExpanding,
+                                            Qt::SmoothTransformation);
+    QPixmap roundedPixmap(size);
+    roundedPixmap.fill(Qt::transparent);
+
+    QPainter painter(&roundedPixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPainterPath path;
+    path.addEllipse(roundedPixmap.rect());
+    painter.setClipPath(path);
+    painter.drawImage(QRect(QPoint(0, 0), size), scaledImage);
+    return roundedPixmap;
+}
+
 }  // namespace
 
 ChatWindow::ChatWindow(QWidget *parent)
     : QWidget(parent)
 {
     const auto &config = chatclient::config::AppConfig::instance();
+    m_userApiClient = new chatclient::api::UserApiClient(this);
 
     // 聊天主界面当前改成三段式结构：
     // 1) 左侧导航栏负责“消息 / 好友”模式切换；
@@ -115,8 +145,12 @@ ChatWindow::ChatWindow(QWidget *parent)
 }
 
 void ChatWindow::setCurrentUserProfile(const QString &displayName,
-                                       const QString &statusText)
+                                       const QString &statusText,
+                                       const QString &userId,
+                                       const QString &avatarStorageKey)
 {
+    m_currentProfileUserId = userId.trimmed();
+    m_currentProfileAvatarStorageKey = avatarStorageKey.trimmed();
     updateProfileAvatar(displayName);
 
     if (m_profileNameLabel)
@@ -128,6 +162,46 @@ void ChatWindow::setCurrentUserProfile(const QString &displayName,
     {
         m_profileStatusLabel->setText(statusText);
     }
+
+    if (!m_userApiClient || m_currentProfileUserId.isEmpty() ||
+        m_currentProfileAvatarStorageKey.isEmpty())
+    {
+        return;
+    }
+
+    const QString expectedUserId = m_currentProfileUserId;
+    m_userApiClient->downloadUserAvatar(
+        expectedUserId,
+        [this, expectedUserId](const QByteArray &data) {
+            if (expectedUserId != m_currentProfileUserId)
+            {
+                return;
+            }
+
+            QImage image;
+            if (!image.loadFromData(data))
+            {
+                CHATCLIENT_LOG_WARN("chat.window")
+                    << "failed to decode avatar image for user_id="
+                    << expectedUserId;
+                return;
+            }
+
+            updateProfileAvatarImage(image);
+        },
+        [expectedUserId](const chatclient::dto::user::ApiErrorDto &error) {
+            CHATCLIENT_LOG_WARN("chat.window")
+                << "failed to download avatar user_id="
+                << expectedUserId
+                << " request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+        });
 }
 
 void ChatWindow::setSessionActionSubmitting(const bool submitting,
@@ -183,6 +257,7 @@ void ChatWindow::updateProfileAvatar(const QString &displayName)
     const QString trimmedName = displayName.trimmed();
     if (trimmedName.isEmpty())
     {
+        m_navAvatarLabel->setPixmap(QPixmap());
         m_navAvatarLabel->setText(QStringLiteral("访客"));
         m_navAvatarLabel->setToolTip(QString());
         return;
@@ -192,8 +267,27 @@ void ChatWindow::updateProfileAvatar(const QString &displayName)
     // 完整名字通过 tooltip 保留，避免导航栏顶部被长用户名撑坏。
     const QString avatarText =
         trimmedName.size() <= 2 ? trimmedName : trimmedName.left(2);
+    m_navAvatarLabel->setPixmap(QPixmap());
     m_navAvatarLabel->setText(avatarText);
     m_navAvatarLabel->setToolTip(trimmedName);
+}
+
+void ChatWindow::updateProfileAvatarImage(const QImage &image)
+{
+    if (!m_navAvatarLabel)
+    {
+        return;
+    }
+
+    const QPixmap roundedPixmap =
+        createRoundedAvatarPixmap(image, m_navAvatarLabel->size());
+    if (roundedPixmap.isNull())
+    {
+        return;
+    }
+
+    m_navAvatarLabel->setText(QString());
+    m_navAvatarLabel->setPixmap(roundedPixmap);
 }
 
 QWidget *ChatWindow::createNavigationRail()
