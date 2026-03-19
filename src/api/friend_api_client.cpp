@@ -28,7 +28,7 @@ void FriendApiClient::searchUserByAccount(const QString &accessToken,
         chatclient::config::AppConfig::instance().userSearchUrl(account);
 
     CHATCLIENT_LOG_INFO("friend.api")
-        << "searching user by account request_id="
+        << "开始按账号搜索用户，request_id="
         << requestId
         << " url="
         << searchUrl.toString()
@@ -76,7 +76,7 @@ void FriendApiClient::searchUserByAccount(const QString &accessToken,
                         }
 
                         CHATCLIENT_LOG_INFO("friend.api")
-                            << "search user succeeded request_id="
+                            << "用户搜索成功，request_id="
                             << response.requestId
                             << " exists="
                             << response.exists
@@ -145,7 +145,7 @@ void FriendApiClient::fetchOutgoingRequests(
         chatclient::config::AppConfig::instance().friendOutgoingRequestsUrl();
 
     CHATCLIENT_LOG_INFO("friend.api")
-        << "fetching outgoing friend requests request_id="
+        << "开始获取已发送的好友申请，request_id="
         << requestId
         << " url="
         << url.toString();
@@ -191,7 +191,7 @@ void FriendApiClient::fetchOutgoingRequests(
                         }
 
                         CHATCLIENT_LOG_INFO("friend.api")
-                            << "outgoing friend requests fetched request_id="
+                            << "已发送好友申请获取成功，request_id="
                             << response.requestId
                             << " count="
                             << response.requests.size();
@@ -255,7 +255,7 @@ void FriendApiClient::fetchFriends(const QString &accessToken,
     const QUrl url = chatclient::config::AppConfig::instance().friendListUrl();
 
     CHATCLIENT_LOG_INFO("friend.api")
-        << "fetching friends request_id="
+        << "开始获取好友列表，request_id="
         << requestId
         << " url="
         << url.toString();
@@ -301,7 +301,7 @@ void FriendApiClient::fetchFriends(const QString &accessToken,
                         }
 
                         CHATCLIENT_LOG_INFO("friend.api")
-                            << "friends fetched request_id="
+                            << "好友列表获取成功，request_id="
                             << response.requestId
                             << " count="
                             << response.friends.size();
@@ -368,7 +368,7 @@ void FriendApiClient::fetchIncomingRequests(
         chatclient::config::AppConfig::instance().friendIncomingRequestsUrl();
 
     CHATCLIENT_LOG_INFO("friend.api")
-        << "fetching incoming friend requests request_id="
+        << "开始获取收到的好友申请，request_id="
         << requestId
         << " url="
         << url.toString();
@@ -414,7 +414,7 @@ void FriendApiClient::fetchIncomingRequests(
                         }
 
                         CHATCLIENT_LOG_INFO("friend.api")
-                            << "incoming friend requests fetched request_id="
+                            << "收到的好友申请获取成功，request_id="
                             << response.requestId
                             << " count="
                             << response.requests.size();
@@ -481,7 +481,7 @@ void FriendApiClient::sendFriendRequest(
         chatclient::config::AppConfig::instance().friendSendRequestUrl();
 
     CHATCLIENT_LOG_INFO("friend.api")
-        << "sending friend request request_id="
+        << "开始发送好友申请，request_id="
         << requestId
         << " url="
         << url.toString()
@@ -535,7 +535,7 @@ void FriendApiClient::sendFriendRequest(
                         }
 
                         CHATCLIENT_LOG_INFO("friend.api")
-                            << "friend request sent request_id="
+                            << "好友申请发送成功，request_id="
                             << response.requestId
                             << " friend_request_id="
                             << response.request.requestId;
@@ -604,7 +604,7 @@ void FriendApiClient::acceptFriendRequest(
             requestId);
 
     CHATCLIENT_LOG_INFO("friend.api")
-        << "accepting friend request request_id="
+        << "开始同意好友申请，request_id="
         << clientRequestId
         << " url="
         << url.toString()
@@ -652,7 +652,7 @@ void FriendApiClient::acceptFriendRequest(
                         }
 
                         CHATCLIENT_LOG_INFO("friend.api")
-                            << "accept friend request succeeded request_id="
+                            << "同意好友申请成功，request_id="
                             << response.requestId
                             << " friend_request_id="
                             << response.request.requestId;
@@ -721,7 +721,7 @@ void FriendApiClient::rejectFriendRequest(
             requestId);
 
     CHATCLIENT_LOG_INFO("friend.api")
-        << "rejecting friend request request_id="
+        << "开始拒绝好友申请，request_id="
         << clientRequestId
         << " url="
         << url.toString()
@@ -769,7 +769,7 @@ void FriendApiClient::rejectFriendRequest(
                         }
 
                         CHATCLIENT_LOG_INFO("friend.api")
-                            << "reject friend request succeeded request_id="
+                            << "拒绝好友申请成功，request_id="
                             << response.requestId
                             << " friend_request_id="
                             << response.request.requestId;

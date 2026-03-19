@@ -11,6 +11,7 @@
 #include "service/auth_service.h"
 #include "service/friend_service.h"
 #include "view/messagelistview.h"
+#include "ws/chat_ws_client.h"
 
 #include <QAbstractItemView>
 #include <QCloseEvent>
@@ -130,6 +131,7 @@ ChatWindow::ChatWindow(QWidget *parent)
     const auto &config = chatclient::config::AppConfig::instance();
     m_conversationApiClient = new chatclient::api::ConversationApiClient(this);
     m_userApiClient = new chatclient::api::UserApiClient(this);
+    m_chatWsClient = new chatclient::ws::ChatWsClient(this);
 
     // 聊天主界面当前改成三段式结构：
     // 1) 左侧导航栏负责“消息 / 好友”模式切换；
@@ -154,6 +156,33 @@ ChatWindow::ChatWindow(QWidget *parent)
 
     setStyleSheet(loadChatStyleSheet());
 
+    connect(m_chatWsClient,
+            &chatclient::ws::ChatWsClient::statusChanged,
+            this,
+            &ChatWindow::updateRealtimeStatus);
+    connect(m_chatWsClient,
+            &chatclient::ws::ChatWsClient::authenticated,
+            this,
+            [this](const QString &userId, const QString &deviceSessionId) {
+                CHATCLIENT_LOG_INFO("chat.window")
+                    << "实时通道认证成功，user_id="
+                    << userId
+                    << " device_session_id="
+                    << deviceSessionId;
+            });
+    connect(m_chatWsClient,
+            &chatclient::ws::ChatWsClient::authenticationFailed,
+            this,
+            [this](const QString &message) {
+                CHATCLIENT_LOG_WARN("chat.window")
+                    << "实时通道认证失败，message="
+                    << message;
+                if (m_friendDetailHintLabel &&
+                    m_currentSection == SidebarSection::kMessages)
+                {
+                    m_friendDetailHintLabel->setText(message);
+                }
+            });
     // 示例消息数据仍然在本地准备，方便当前继续联调 UI。
     m_messageModelRegistry->addTextMessage(QStringLiteral("product_discussion"),
                                            QStringLiteral("李华"),
@@ -205,6 +234,8 @@ void ChatWindow::setCurrentUserProfile(const QString &displayName,
         m_profileStatusLabel->setText(statusText);
     }
 
+    connectRealtimeChannel();
+
     if (!m_userApiClient || m_currentProfileUserId.isEmpty() ||
         m_currentProfileAvatarStorageKey.isEmpty())
     {
@@ -224,7 +255,7 @@ void ChatWindow::setCurrentUserProfile(const QString &displayName,
             if (!image.loadFromData(data))
             {
                 CHATCLIENT_LOG_WARN("chat.window")
-                    << "failed to decode avatar image for user_id="
+                    << "解析当前用户头像图片失败，user_id="
                     << expectedUserId;
                 return;
             }
@@ -233,7 +264,7 @@ void ChatWindow::setCurrentUserProfile(const QString &displayName,
         },
         [expectedUserId](const chatclient::dto::user::ApiErrorDto &error) {
             CHATCLIENT_LOG_WARN("chat.window")
-                << "failed to download avatar user_id="
+                << "下载当前用户头像失败，user_id="
                 << expectedUserId
                 << " request_id="
                 << error.requestId
@@ -284,8 +315,22 @@ void ChatWindow::setAuthService(chatclient::service::AuthService *authService)
 
     if (!m_authService)
     {
+        if (m_chatWsClient)
+        {
+            m_chatWsClient->disconnectFromServer();
+        }
         return;
     }
+
+    connect(m_authService,
+            &chatclient::service::AuthService::logoutSucceeded,
+            this,
+            [this]() {
+                if (m_chatWsClient)
+                {
+                    m_chatWsClient->disconnectFromServer();
+                }
+            });
 
     m_friendService = new chatclient::service::FriendService(m_authService, this);
     connect(m_friendService,
@@ -348,6 +393,7 @@ void ChatWindow::setAuthService(chatclient::service::AuthService *authService)
             });
 
     refreshFriendList(false);
+    connectRealtimeChannel();
 }
 
 void ChatWindow::allowWindowClose()
@@ -886,7 +932,7 @@ void ChatWindow::handleStartPrivateConversation()
             m_currentConversationId = response.conversation.conversationId;
 
             CHATCLIENT_LOG_INFO("chat.window")
-                << "private conversation created request_id="
+                << "私聊会话创建成功，request_id="
                 << response.requestId
                 << " conversation_id="
                 << response.conversation.conversationId
@@ -911,7 +957,7 @@ void ChatWindow::handleStartPrivateConversation()
             }
 
             CHATCLIENT_LOG_WARN("chat.window")
-                << "failed to create private conversation request_id="
+                << "创建私聊会话失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -926,6 +972,34 @@ void ChatWindow::handleStartPrivateConversation()
                     localizeCreateConversationError(error));
             }
         });
+}
+
+void ChatWindow::connectRealtimeChannel()
+{
+    if (!m_chatWsClient)
+    {
+        return;
+    }
+
+    if (!m_authService || !m_authService->hasActiveSession())
+    {
+        m_chatWsClient->disconnectFromServer();
+        return;
+    }
+
+    const auto &session = m_authService->currentSession();
+    m_chatWsClient->setSession(session.accessToken,
+                               m_authService->currentDeviceId(),
+                               session.deviceSessionId);
+    m_chatWsClient->connectToServer();
+}
+
+void ChatWindow::updateRealtimeStatus(const QString &statusText)
+{
+    if (m_profileStatusLabel && !statusText.trimmed().isEmpty())
+    {
+        m_profileStatusLabel->setText(statusText);
+    }
 }
 
 void ChatWindow::handleSessionSelectionChanged()
@@ -1020,7 +1094,7 @@ void ChatWindow::handleFriendSelectionChanged()
             if (!image.loadFromData(data))
             {
                 CHATCLIENT_LOG_WARN("chat.window")
-                    << "failed to decode friend avatar image for user_id="
+                    << "解析好友头像图片失败，user_id="
                     << expectedUserId;
                 return;
             }
@@ -1029,7 +1103,7 @@ void ChatWindow::handleFriendSelectionChanged()
         },
         [expectedUserId](const chatclient::dto::user::ApiErrorDto &error) {
             CHATCLIENT_LOG_WARN("chat.window")
-                << "failed to download friend avatar user_id="
+                << "下载好友头像失败，user_id="
                 << expectedUserId
                 << " request_id="
                 << error.requestId

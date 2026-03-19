@@ -21,6 +21,10 @@ class ConversationApiClient;
 class UserApiClient;
 }
 
+namespace chatclient::ws {
+class ChatWsClient;
+}
+
 namespace chatclient::service {
 class AuthService;
 class FriendService;
@@ -214,6 +218,17 @@ class ChatWindow : public QWidget
      */
     void handleStartPrivateConversation();
 
+    /**
+     * @brief 按当前登录态建立最小 WebSocket 实时通道。
+     */
+    void connectRealtimeChannel();
+
+    /**
+     * @brief 更新左下角资料卡中的实时通道状态文本。
+     * @param statusText 适合直接展示到界面的状态文本。
+     */
+    void updateRealtimeStatus(const QString &statusText);
+
     SidebarSection m_currentSection{SidebarSection::kMessages};
 
     // 左侧导航栏：消息 / 好友两种主入口。
@@ -248,6 +263,7 @@ class ChatWindow : public QWidget
     QTextEdit *m_messageEditor = nullptr;
     chatclient::api::ConversationApiClient *m_conversationApiClient = nullptr;
     chatclient::api::UserApiClient *m_userApiClient = nullptr;
+    chatclient::ws::ChatWsClient *m_chatWsClient = nullptr;
     chatclient::service::AuthService *m_authService = nullptr;
     chatclient::service::FriendService *m_friendService = nullptr;
 

@@ -15,9 +15,9 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # 同时支持 Qt6 与 Qt5。
-# 当前除了 Widgets，还需要 Network 来承接注册接口请求。
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
+# 当前除了 Widgets、Network，还需要 WebSockets 来承接实时通道。
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network WebSockets)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network WebSockets)
 
 
 # 应用目标（收集 src 目录下所有文件）
@@ -55,10 +55,11 @@ if (WIN32)
     target_compile_definitions(chatClient PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 
-# 链接 Qt Widgets 和 Qt Network。
+# 链接 Qt Widgets、Qt Network 和 Qt WebSockets。
 target_link_libraries(chatClient PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Network
+    Qt${QT_VERSION_MAJOR}::WebSockets
 )
 
 if (WIN32)

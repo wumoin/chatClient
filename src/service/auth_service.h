@@ -99,6 +99,12 @@ public:
      */
     const chatclient::dto::auth::LoginSessionDto &currentSession() const;
 
+    /**
+     * @brief 返回当前客户端稳定设备标识。
+     * @return 可直接用于 HTTP / WS 设备会话校验的 `device_id`。
+     */
+    QString currentDeviceId() const;
+
 signals:
     /**
      * @brief 注册请求已开始提交。

@@ -66,25 +66,30 @@ int severityRank(QtMsgType type)
 int parseMinimumSeverity(const QString &levelText)
 {
     const QString normalized = levelText.trimmed().toUpper();
-    if (normalized == QStringLiteral("DEBUG"))
+    if (normalized == QStringLiteral("DEBUG") ||
+        normalized == QStringLiteral("调试"))
     {
         return severityRank(QtDebugMsg);
     }
-    if (normalized == QStringLiteral("INFO"))
+    if (normalized == QStringLiteral("INFO") ||
+        normalized == QStringLiteral("信息"))
     {
         return severityRank(QtInfoMsg);
     }
     if (normalized == QStringLiteral("WARN") ||
-        normalized == QStringLiteral("WARNING"))
+        normalized == QStringLiteral("WARNING") ||
+        normalized == QStringLiteral("警告"))
     {
         return severityRank(QtWarningMsg);
     }
     if (normalized == QStringLiteral("ERROR") ||
-        normalized == QStringLiteral("CRITICAL"))
+        normalized == QStringLiteral("CRITICAL") ||
+        normalized == QStringLiteral("错误"))
     {
         return severityRank(QtCriticalMsg);
     }
-    if (normalized == QStringLiteral("FATAL"))
+    if (normalized == QStringLiteral("FATAL") ||
+        normalized == QStringLiteral("致命"))
     {
         return severityRank(QtFatalMsg);
     }
@@ -102,18 +107,18 @@ QString levelText(QtMsgType type)
     switch (type)
     {
     case QtDebugMsg:
-        return QStringLiteral("DEBUG");
+        return QStringLiteral("调试");
     case QtInfoMsg:
-        return QStringLiteral("INFO");
+        return QStringLiteral("信息");
     case QtWarningMsg:
-        return QStringLiteral("WARN");
+        return QStringLiteral("警告");
     case QtCriticalMsg:
-        return QStringLiteral("ERROR");
+        return QStringLiteral("错误");
     case QtFatalMsg:
-        return QStringLiteral("FATAL");
+        return QStringLiteral("致命");
     }
 
-    return QStringLiteral("INFO");
+    return QStringLiteral("信息");
 }
 
 /**

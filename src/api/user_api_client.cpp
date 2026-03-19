@@ -34,7 +34,7 @@ void UserApiClient::uploadTemporaryAvatar(
         chatclient::config::AppConfig::instance().avatarTempUploadUrl();
 
     CHATCLIENT_LOG_INFO("user.api")
-        << "uploading temporary avatar request_id="
+        << "开始上传临时头像，request_id="
         << requestId
         << " url="
         << uploadUrl.toString()
@@ -49,7 +49,7 @@ void UserApiClient::uploadTemporaryAvatar(
         error.message = QStringLiteral("无法读取选中的头像文件");
 
         CHATCLIENT_LOG_WARN("user.api")
-            << "failed to open local avatar file request_id="
+            << "打开本地头像文件失败，request_id="
             << requestId
             << " local_file="
             << localFilePath;
@@ -124,7 +124,7 @@ void UserApiClient::uploadTemporaryAvatar(
                         }
 
                         CHATCLIENT_LOG_INFO("user.api")
-                            << "temporary avatar upload succeeded request_id="
+                            << "临时头像上传成功，request_id="
                             << response.requestId
                             << " http_status="
                             << httpStatus
@@ -151,7 +151,7 @@ void UserApiClient::uploadTemporaryAvatar(
                                             : errorMessage;
 
                         CHATCLIENT_LOG_ERROR("user.api")
-                            << "temporary avatar upload parse failed request_id="
+                            << "解析临时头像上传响应失败，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
@@ -176,7 +176,7 @@ void UserApiClient::uploadTemporaryAvatar(
                         }
 
                         CHATCLIENT_LOG_WARN("user.api")
-                            << "temporary avatar upload failed request_id="
+                            << "临时头像上传失败，request_id="
                             << error.requestId
                             << " http_status="
                             << httpStatus
@@ -194,7 +194,7 @@ void UserApiClient::uploadTemporaryAvatar(
                         error.message = fallbackMessage;
 
                         CHATCLIENT_LOG_WARN("user.api")
-                            << "temporary avatar upload returned non-json response request_id="
+                            << "临时头像上传返回了非 JSON 响应，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
@@ -217,7 +217,7 @@ void UserApiClient::downloadUserAvatar(const QString &userId,
         chatclient::config::AppConfig::instance().userAvatarUrl(userId);
 
     CHATCLIENT_LOG_INFO("user.api")
-        << "downloading user avatar request_id="
+        << "开始下载用户头像，request_id="
         << requestId
         << " url="
         << avatarUrl.toString()
@@ -244,7 +244,7 @@ void UserApiClient::downloadUserAvatar(const QString &userId,
                     reply->error() == QNetworkReply::NoError)
                 {
                     CHATCLIENT_LOG_INFO("user.api")
-                        << "user avatar download succeeded request_id="
+                        << "用户头像下载成功，request_id="
                         << requestId
                         << " http_status="
                         << httpStatus
@@ -284,7 +284,7 @@ void UserApiClient::downloadUserAvatar(const QString &userId,
                 }
 
                 CHATCLIENT_LOG_WARN("user.api")
-                    << "user avatar download failed request_id="
+                    << "用户头像下载失败，request_id="
                     << error.requestId
                     << " http_status="
                     << error.httpStatus

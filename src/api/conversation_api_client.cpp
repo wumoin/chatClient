@@ -30,7 +30,7 @@ void ConversationApiClient::createPrivateConversation(
         chatclient::config::AppConfig::instance().conversationPrivateUrl();
 
     CHATCLIENT_LOG_INFO("conversation.api")
-        << "create private conversation request started request_id="
+        << "开始创建私聊会话，request_id="
         << requestId
         << " peer_user_id="
         << request.peerUserId
@@ -85,7 +85,7 @@ void ConversationApiClient::createPrivateConversation(
                         }
 
                         CHATCLIENT_LOG_INFO("conversation.api")
-                            << "create private conversation succeeded request_id="
+                            << "创建私聊会话成功，request_id="
                             << response.requestId
                             << " conversation_id="
                             << response.conversation.conversationId;

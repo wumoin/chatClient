@@ -30,7 +30,7 @@ void AuthApiClient::registerUser(
     const QUrl registerUrl = chatclient::config::AppConfig::instance().registerUrl();
 
     CHATCLIENT_LOG_INFO("auth.api")
-        << "sending register request request_id="
+        << "开始发送注册请求，request_id="
         << requestId
         << " url="
         << registerUrl.toString()
@@ -84,7 +84,7 @@ void AuthApiClient::registerUser(
                         }
 
                         CHATCLIENT_LOG_INFO("auth.api")
-                            << "register request succeeded request_id="
+                            << "注册请求成功，request_id="
                             << response.requestId
                             << " http_status="
                             << httpStatus
@@ -110,7 +110,7 @@ void AuthApiClient::registerUser(
                                             ? fallbackMessage
                                             : errorMessage;
                         CHATCLIENT_LOG_ERROR("auth.api")
-                            << "register success response parse failed request_id="
+                            << "解析注册成功响应失败，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
@@ -134,7 +134,7 @@ void AuthApiClient::registerUser(
                             error.requestId = requestId;
                         }
                         CHATCLIENT_LOG_WARN("auth.api")
-                            << "register request failed request_id="
+                            << "注册请求失败，request_id="
                             << error.requestId
                             << " http_status="
                             << httpStatus
@@ -151,7 +151,7 @@ void AuthApiClient::registerUser(
                         error.requestId = requestId;
                         error.message = fallbackMessage;
                         CHATCLIENT_LOG_WARN("auth.api")
-                            << "register request returned non-json response request_id="
+                            << "注册请求返回了非 JSON 响应，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
@@ -174,7 +174,7 @@ void AuthApiClient::loginUser(
     const QUrl loginUrl = chatclient::config::AppConfig::instance().loginUrl();
 
     CHATCLIENT_LOG_INFO("auth.api")
-        << "sending login request request_id="
+        << "开始发送登录请求，request_id="
         << requestId
         << " url="
         << loginUrl.toString()
@@ -227,7 +227,7 @@ void AuthApiClient::loginUser(
                         }
 
                         CHATCLIENT_LOG_INFO("auth.api")
-                            << "login request succeeded request_id="
+                            << "登录请求成功，request_id="
                             << response.requestId
                             << " http_status="
                             << httpStatus
@@ -255,7 +255,7 @@ void AuthApiClient::loginUser(
                                             ? fallbackMessage
                                             : errorMessage;
                         CHATCLIENT_LOG_ERROR("auth.api")
-                            << "login success response parse failed request_id="
+                            << "解析登录成功响应失败，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
@@ -279,7 +279,7 @@ void AuthApiClient::loginUser(
                             error.requestId = requestId;
                         }
                         CHATCLIENT_LOG_WARN("auth.api")
-                            << "login request failed request_id="
+                            << "登录请求失败，request_id="
                             << error.requestId
                             << " http_status="
                             << httpStatus
@@ -296,7 +296,7 @@ void AuthApiClient::loginUser(
                         error.requestId = requestId;
                         error.message = fallbackMessage;
                         CHATCLIENT_LOG_WARN("auth.api")
-                            << "login request returned non-json response request_id="
+                            << "登录请求返回了非 JSON 响应，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
@@ -318,7 +318,7 @@ void AuthApiClient::logoutUser(const QString &accessToken,
     const QUrl logoutUrl = chatclient::config::AppConfig::instance().logoutUrl();
 
     CHATCLIENT_LOG_INFO("auth.api")
-        << "sending logout request request_id="
+        << "开始发送登出请求，request_id="
         << requestId
         << " url="
         << logoutUrl.toString();
@@ -364,7 +364,7 @@ void AuthApiClient::logoutUser(const QString &accessToken,
                         }
 
                         CHATCLIENT_LOG_INFO("auth.api")
-                            << "logout request succeeded request_id="
+                            << "登出请求成功，request_id="
                             << response.requestId
                             << " http_status="
                             << httpStatus;
@@ -388,7 +388,7 @@ void AuthApiClient::logoutUser(const QString &accessToken,
                                             ? fallbackMessage
                                             : errorMessage;
                         CHATCLIENT_LOG_ERROR("auth.api")
-                            << "logout success response parse failed request_id="
+                            << "解析登出成功响应失败，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
@@ -412,7 +412,7 @@ void AuthApiClient::logoutUser(const QString &accessToken,
                             error.requestId = requestId;
                         }
                         CHATCLIENT_LOG_WARN("auth.api")
-                            << "logout request failed request_id="
+                            << "登出请求失败，request_id="
                             << error.requestId
                             << " http_status="
                             << httpStatus
@@ -429,7 +429,7 @@ void AuthApiClient::logoutUser(const QString &accessToken,
                         error.requestId = requestId;
                         error.message = fallbackMessage;
                         CHATCLIENT_LOG_WARN("auth.api")
-                            << "logout request returned non-json response request_id="
+                            << "登出请求返回了非 JSON 响应，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
@@ -452,7 +452,7 @@ bool AuthApiClient::logoutUserBlocking(
     const QUrl logoutUrl = chatclient::config::AppConfig::instance().logoutUrl();
 
     CHATCLIENT_LOG_INFO("auth.api")
-        << "sending blocking logout request request_id="
+        << "开始发送阻塞式登出请求，request_id="
         << requestId
         << " url="
         << logoutUrl.toString();
@@ -487,7 +487,7 @@ bool AuthApiClient::logoutUserBlocking(
             error->message = QStringLiteral("登出请求超时");
         }
         CHATCLIENT_LOG_WARN("auth.api")
-            << "blocking logout request timed out request_id="
+            << "阻塞式登出请求超时，request_id="
             << requestId;
         reply->deleteLater();
         return false;

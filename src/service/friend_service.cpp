@@ -58,7 +58,7 @@ bool FriendService::searchUser(const QString &account, QString *errorMessage)
     m_searching = true;
     emit searchStarted();
     CHATCLIENT_LOG_INFO("friend.service")
-        << "search user started account="
+        << "开始搜索用户，account="
         << trimmedAccount;
 
     m_friendApiClient.searchUserByAccount(
@@ -67,7 +67,7 @@ bool FriendService::searchUser(const QString &account, QString *errorMessage)
         [this](const chatclient::dto::friendship::SearchUserResponseDto &response) {
             m_searching = false;
             CHATCLIENT_LOG_INFO("friend.service")
-                << "search user completed request_id="
+                << "搜索用户完成，request_id="
                 << response.requestId
                 << " exists="
                 << response.exists
@@ -78,7 +78,7 @@ bool FriendService::searchUser(const QString &account, QString *errorMessage)
         [this](const chatclient::dto::friendship::ApiErrorDto &error) {
             m_searching = false;
             CHATCLIENT_LOG_WARN("friend.service")
-                << "search user failed request_id="
+                << "搜索用户失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -115,14 +115,14 @@ bool FriendService::fetchOutgoingRequests(QString *errorMessage)
     m_loadingOutgoingRequests = true;
     emit outgoingRequestsStarted();
     CHATCLIENT_LOG_INFO("friend.service")
-        << "fetch outgoing requests started";
+        << "开始刷新已发送的好友申请";
 
     m_friendApiClient.fetchOutgoingRequests(
         accessToken,
         [this](const chatclient::dto::friendship::FriendRequestListResponseDto &response) {
             m_loadingOutgoingRequests = false;
             CHATCLIENT_LOG_INFO("friend.service")
-                << "fetch outgoing requests completed request_id="
+                << "已发送好友申请刷新完成，request_id="
                 << response.requestId
                 << " count="
                 << response.requests.size();
@@ -131,7 +131,7 @@ bool FriendService::fetchOutgoingRequests(QString *errorMessage)
         [this](const chatclient::dto::friendship::ApiErrorDto &error) {
             m_loadingOutgoingRequests = false;
             CHATCLIENT_LOG_WARN("friend.service")
-                << "fetch outgoing requests failed request_id="
+                << "刷新已发送好友申请失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -167,14 +167,14 @@ bool FriendService::fetchFriends(QString *errorMessage)
 
     m_loadingFriends = true;
     emit friendsStarted();
-    CHATCLIENT_LOG_INFO("friend.service") << "fetch friends started";
+    CHATCLIENT_LOG_INFO("friend.service") << "开始刷新好友列表";
 
     m_friendApiClient.fetchFriends(
         accessToken,
         [this](const chatclient::dto::friendship::FriendListResponseDto &response) {
             m_loadingFriends = false;
             CHATCLIENT_LOG_INFO("friend.service")
-                << "fetch friends completed request_id="
+                << "好友列表刷新完成，request_id="
                 << response.requestId
                 << " count="
                 << response.friends.size();
@@ -183,7 +183,7 @@ bool FriendService::fetchFriends(QString *errorMessage)
         [this](const chatclient::dto::friendship::ApiErrorDto &error) {
             m_loadingFriends = false;
             CHATCLIENT_LOG_WARN("friend.service")
-                << "fetch friends failed request_id="
+                << "刷新好友列表失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -220,14 +220,14 @@ bool FriendService::fetchIncomingRequests(QString *errorMessage)
     m_loadingIncomingRequests = true;
     emit incomingRequestsStarted();
     CHATCLIENT_LOG_INFO("friend.service")
-        << "fetch incoming requests started";
+        << "开始刷新收到的好友申请";
 
     m_friendApiClient.fetchIncomingRequests(
         accessToken,
         [this](const chatclient::dto::friendship::FriendRequestListResponseDto &response) {
             m_loadingIncomingRequests = false;
             CHATCLIENT_LOG_INFO("friend.service")
-                << "fetch incoming requests completed request_id="
+                << "收到的好友申请刷新完成，request_id="
                 << response.requestId
                 << " count="
                 << response.requests.size();
@@ -236,7 +236,7 @@ bool FriendService::fetchIncomingRequests(QString *errorMessage)
         [this](const chatclient::dto::friendship::ApiErrorDto &error) {
             m_loadingIncomingRequests = false;
             CHATCLIENT_LOG_WARN("friend.service")
-                << "fetch incoming requests failed request_id="
+                << "刷新收到的好友申请失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -309,7 +309,7 @@ bool FriendService::sendFriendRequest(const QString &targetUserId,
     m_sendingRequest = true;
     emit sendFriendRequestStarted();
     CHATCLIENT_LOG_INFO("friend.service")
-        << "send friend request started target_user_id="
+        << "开始发送好友申请，target_user_id="
         << request.targetUserId;
 
     m_friendApiClient.sendFriendRequest(
@@ -318,7 +318,7 @@ bool FriendService::sendFriendRequest(const QString &targetUserId,
         [this](const chatclient::dto::friendship::SendFriendRequestResponseDto &response) {
             m_sendingRequest = false;
             CHATCLIENT_LOG_INFO("friend.service")
-                << "send friend request completed request_id="
+                << "好友申请发送完成，request_id="
                 << response.requestId
                 << " friend_request_id="
                 << response.request.requestId;
@@ -327,7 +327,7 @@ bool FriendService::sendFriendRequest(const QString &targetUserId,
         [this](const chatclient::dto::friendship::ApiErrorDto &error) {
             m_sendingRequest = false;
             CHATCLIENT_LOG_WARN("friend.service")
-                << "send friend request failed request_id="
+                << "发送好友申请失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -375,7 +375,7 @@ bool FriendService::acceptFriendRequest(const QString &requestId,
     m_handlingRequest = true;
     emit handleFriendRequestStarted();
     CHATCLIENT_LOG_INFO("friend.service")
-        << "accept friend request started request_id="
+        << "开始同意好友申请，request_id="
         << trimmedRequestId;
 
     m_friendApiClient.acceptFriendRequest(
@@ -384,7 +384,7 @@ bool FriendService::acceptFriendRequest(const QString &requestId,
         [this](const chatclient::dto::friendship::SendFriendRequestResponseDto &response) {
             m_handlingRequest = false;
             CHATCLIENT_LOG_INFO("friend.service")
-                << "accept friend request completed request_id="
+                << "同意好友申请完成，request_id="
                 << response.requestId
                 << " friend_request_id="
                 << response.request.requestId;
@@ -393,7 +393,7 @@ bool FriendService::acceptFriendRequest(const QString &requestId,
         [this](const chatclient::dto::friendship::ApiErrorDto &error) {
             m_handlingRequest = false;
             CHATCLIENT_LOG_WARN("friend.service")
-                << "accept friend request failed request_id="
+                << "同意好友申请失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -441,7 +441,7 @@ bool FriendService::rejectFriendRequest(const QString &requestId,
     m_handlingRequest = true;
     emit handleFriendRequestStarted();
     CHATCLIENT_LOG_INFO("friend.service")
-        << "reject friend request started request_id="
+        << "开始拒绝好友申请，request_id="
         << trimmedRequestId;
 
     m_friendApiClient.rejectFriendRequest(
@@ -450,7 +450,7 @@ bool FriendService::rejectFriendRequest(const QString &requestId,
         [this](const chatclient::dto::friendship::SendFriendRequestResponseDto &response) {
             m_handlingRequest = false;
             CHATCLIENT_LOG_INFO("friend.service")
-                << "reject friend request completed request_id="
+                << "拒绝好友申请完成，request_id="
                 << response.requestId
                 << " friend_request_id="
                 << response.request.requestId;
@@ -459,7 +459,7 @@ bool FriendService::rejectFriendRequest(const QString &requestId,
         [this](const chatclient::dto::friendship::ApiErrorDto &error) {
             m_handlingRequest = false;
             CHATCLIENT_LOG_WARN("friend.service")
-                << "reject friend request failed request_id="
+                << "拒绝好友申请失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus

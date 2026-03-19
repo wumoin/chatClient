@@ -65,7 +65,7 @@ bool AuthService::registerUser(const QString &account,
     if (m_registering)
     {
         CHATCLIENT_LOG_WARN("auth.service")
-            << "register request ignored because another request is still running";
+            << "注册请求被忽略，原因：仍有其他认证请求在处理中";
         if (errorMessage)
         {
             *errorMessage = QStringLiteral("注册请求正在提交，请稍候");
@@ -83,7 +83,7 @@ bool AuthService::registerUser(const QString &account,
                               errorMessage))
     {
         CHATCLIENT_LOG_WARN("auth.service")
-            << "register validation failed account="
+            << "注册参数校验失败，account="
             << account
             << " reason="
             << (errorMessage != nullptr ? *errorMessage : QString());
@@ -93,7 +93,7 @@ bool AuthService::registerUser(const QString &account,
     m_registering = true;
     emit registerStarted();
     CHATCLIENT_LOG_INFO("auth.service")
-        << "register request started account="
+        << "注册请求开始，account="
         << request.account
         << " nickname="
         << request.nickname;
@@ -103,7 +103,7 @@ bool AuthService::registerUser(const QString &account,
         [this](const chatclient::dto::auth::RegisterResponseDto &response) {
             m_registering = false;
             CHATCLIENT_LOG_INFO("auth.service")
-                << "register request completed request_id="
+                << "注册请求完成，request_id="
                 << response.requestId
                 << " user_id="
                 << response.user.userId;
@@ -112,7 +112,7 @@ bool AuthService::registerUser(const QString &account,
         [this](const chatclient::dto::auth::ApiErrorDto &error) {
             m_registering = false;
             CHATCLIENT_LOG_WARN("auth.service")
-                << "register request failed request_id="
+                << "注册请求失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -136,7 +136,7 @@ bool AuthService::loginUser(const QString &account,
     if (m_loggingIn)
     {
         CHATCLIENT_LOG_WARN("auth.service")
-            << "login request ignored because another request is still running";
+            << "登录请求被忽略，原因：仍有其他认证请求在处理中";
         if (errorMessage)
         {
             *errorMessage = QStringLiteral("登录请求正在提交，请稍候");
@@ -148,7 +148,7 @@ bool AuthService::loginUser(const QString &account,
     if (!buildLoginRequest(account, password, &request, errorMessage))
     {
         CHATCLIENT_LOG_WARN("auth.service")
-            << "login validation failed account="
+            << "登录参数校验失败，account="
             << account
             << " reason="
             << (errorMessage != nullptr ? *errorMessage : QString());
@@ -158,7 +158,7 @@ bool AuthService::loginUser(const QString &account,
     m_loggingIn = true;
     emit loginStarted();
     CHATCLIENT_LOG_INFO("auth.service")
-        << "login request started account="
+        << "登录请求开始，account="
         << request.account
         << " device_id="
         << request.deviceId;
@@ -178,7 +178,7 @@ bool AuthService::loginUser(const QString &account,
             persistSession(session);
 
             CHATCLIENT_LOG_INFO("auth.service")
-                << "login request completed request_id="
+                << "登录请求完成，request_id="
                 << response.requestId
                 << " user_id="
                 << response.user.userId
@@ -189,7 +189,7 @@ bool AuthService::loginUser(const QString &account,
         [this](const chatclient::dto::auth::ApiErrorDto &error) {
             m_loggingIn = false;
             CHATCLIENT_LOG_WARN("auth.service")
-                << "login request failed request_id="
+                << "登录请求失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -211,7 +211,7 @@ bool AuthService::logoutUser(QString *errorMessage)
     if (m_loggingOut)
     {
         CHATCLIENT_LOG_WARN("auth.service")
-            << "logout request ignored because another logout is still running";
+            << "登出请求被忽略，原因：已有登出流程正在进行";
         if (errorMessage)
         {
             *errorMessage = QStringLiteral("正在退出登录，请稍候");
@@ -222,7 +222,7 @@ bool AuthService::logoutUser(QString *errorMessage)
     if (m_loggingIn || m_registering)
     {
         CHATCLIENT_LOG_WARN("auth.service")
-            << "logout request ignored because another auth request is still running";
+            << "登出请求被忽略，原因：仍有其他认证请求在处理中";
         if (errorMessage)
         {
             *errorMessage = QStringLiteral("当前仍有认证请求在处理中，请稍候");
@@ -233,7 +233,7 @@ bool AuthService::logoutUser(QString *errorMessage)
     if (!m_hasActiveSession || m_currentSession.accessToken.trimmed().isEmpty())
     {
         CHATCLIENT_LOG_INFO("auth.service")
-            << "logout requested without active session, clearing local state directly";
+            << "当前没有有效登录态，直接清理本地会话";
         clearPersistedSession();
         emit logoutSucceeded();
         return true;
@@ -242,7 +242,7 @@ bool AuthService::logoutUser(QString *errorMessage)
     m_loggingOut = true;
     emit logoutStarted();
     CHATCLIENT_LOG_INFO("auth.service")
-        << "logout request started user_id="
+        << "登出请求开始，user_id="
         << m_currentSession.user.userId
         << " device_session_id="
         << m_currentSession.deviceSessionId;
@@ -253,14 +253,14 @@ bool AuthService::logoutUser(QString *errorMessage)
             m_loggingOut = false;
             clearPersistedSession();
             CHATCLIENT_LOG_INFO("auth.service")
-                << "logout request completed request_id="
+                << "登出请求完成，request_id="
                 << response.requestId;
             emit logoutSucceeded();
         },
         [this](const chatclient::dto::auth::ApiErrorDto &error) {
             m_loggingOut = false;
             CHATCLIENT_LOG_WARN("auth.service")
-                << "logout request failed request_id="
+                << "登出请求失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -296,7 +296,7 @@ bool AuthService::logoutUserBlocking(QString *errorMessage)
         if (!ok)
         {
             CHATCLIENT_LOG_WARN("auth.service")
-                << "blocking logout request failed request_id="
+                << "阻塞式登出请求失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -348,6 +348,11 @@ bool AuthService::hasActiveSession() const
 const chatclient::dto::auth::LoginSessionDto &AuthService::currentSession() const
 {
     return m_currentSession;
+}
+
+QString AuthService::currentDeviceId() const
+{
+    return deviceId();
 }
 
 bool AuthService::buildRegisterRequest(
@@ -681,7 +686,7 @@ void AuthService::restoreSession()
     if (m_hasActiveSession)
     {
         CHATCLIENT_LOG_INFO("auth.service")
-            << "restored local session user_id="
+            << "已恢复本地登录态，user_id="
             << m_currentSession.user.userId
             << " device_session_id="
             << m_currentSession.deviceSessionId;

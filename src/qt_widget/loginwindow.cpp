@@ -280,7 +280,7 @@ void LoginWindow::showRegisterPage()
     if (!m_stack) {
         return;
     }
-    CHATCLIENT_LOG_INFO("login.window") << "switching to register page";
+    CHATCLIENT_LOG_INFO("login.window") << "切换到注册页";
     m_stack->setCurrentIndex(1);
     m_titleLabel->setText(QStringLiteral("创建账号"));
     m_subtitleLabel->setText(QStringLiteral("填写信息以注册新账号"));
@@ -295,7 +295,7 @@ void LoginWindow::showLoginPage()
     if (!m_stack) {
         return;
     }
-    CHATCLIENT_LOG_INFO("login.window") << "switching to login page";
+    CHATCLIENT_LOG_INFO("login.window") << "切换到登录页";
     m_stack->setCurrentIndex(0);
     m_titleLabel->setText(
         chatclient::config::AppConfig::instance().displayName());
@@ -492,7 +492,7 @@ void LoginWindow::handleLoginSubmit()
     }
 
     CHATCLIENT_LOG_INFO("login.window")
-        << "login submit clicked account="
+        << "点击登录，account="
         << (m_accountEdit ? m_accountEdit->text() : QString());
 
     QString errorMessage;
@@ -501,7 +501,7 @@ void LoginWindow::handleLoginSubmit()
             m_passwordEdit ? m_passwordEdit->text() : QString(),
             &errorMessage)) {
         CHATCLIENT_LOG_WARN("login.window")
-            << "login submit rejected message="
+            << "登录提交被拒绝，message="
             << errorMessage;
         setLoginStatusMessage(errorMessage, StatusTone::kError);
         return;
@@ -512,7 +512,7 @@ void LoginWindow::handleLoginSucceeded(
     const chatclient::dto::auth::LoginSessionDto &session)
 {
     CHATCLIENT_LOG_INFO("login.window")
-        << "login succeeded user_id="
+        << "登录成功，user_id="
         << session.user.userId
         << " device_session_id="
         << session.deviceSessionId;
@@ -525,7 +525,7 @@ void LoginWindow::handleLoginSucceeded(
 void LoginWindow::handleLoginFailed(const QString &message)
 {
     CHATCLIENT_LOG_WARN("login.window")
-        << "login failed message="
+        << "登录失败，message="
         << message;
     setLoginSubmitting(false);
     setLoginStatusMessage(message, StatusTone::kError);
@@ -563,7 +563,7 @@ void LoginWindow::handleSwitchAccountRequested()
 
 void LoginWindow::handleSwitchAccountSucceeded()
 {
-    CHATCLIENT_LOG_INFO("login.window") << "switch account succeeded";
+    CHATCLIENT_LOG_INFO("login.window") << "切换账号成功";
 
     if (m_chatWindow) {
         m_chatWindow->setSessionActionSubmitting(false, false);
@@ -583,7 +583,7 @@ void LoginWindow::handleSwitchAccountSucceeded()
 void LoginWindow::handleSwitchAccountFailed(const QString &message)
 {
     CHATCLIENT_LOG_WARN("login.window")
-        << "switch account failed message="
+        << "切换账号失败，message="
         << message;
 
     if (m_chatWindow) {
@@ -669,7 +669,7 @@ void LoginWindow::handleRegisterAvatarSelect()
             }
 
             CHATCLIENT_LOG_INFO("login.window")
-                << "temporary avatar uploaded request_id="
+                << "临时头像上传成功，request_id="
                 << response.requestId
                 << " avatar_upload_key="
                 << response.avatarUploadKey;
@@ -698,7 +698,7 @@ void LoginWindow::handleRegisterAvatarSelect()
             }
 
             CHATCLIENT_LOG_WARN("login.window")
-                << "temporary avatar upload failed request_id="
+                << "临时头像上传失败，request_id="
                 << error.requestId
                 << " http_status="
                 << error.httpStatus
@@ -717,7 +717,7 @@ void LoginWindow::handleRegisterSubmit()
     }
 
     CHATCLIENT_LOG_INFO("login.window")
-        << "register submit clicked account="
+        << "点击注册，account="
         << (m_registerAccountEdit ? m_registerAccountEdit->text() : QString());
 
     if (m_registerAvatarUploading)
@@ -735,7 +735,7 @@ void LoginWindow::handleRegisterSubmit()
                                      m_registerAvatarUploadKey,
                                      &errorMessage)) {
         CHATCLIENT_LOG_WARN("login.window")
-            << "register submit rejected message="
+            << "注册提交被拒绝，message="
             << errorMessage;
         setRegisterStatusMessage(errorMessage, StatusTone::kError);
         return;
@@ -746,7 +746,7 @@ void LoginWindow::handleRegisterSucceeded(
     const chatclient::dto::auth::RegisterUserDto &user)
 {
     CHATCLIENT_LOG_INFO("login.window")
-        << "register succeeded user_id="
+        << "注册成功，user_id="
         << user.userId
         << " account="
         << user.account;
@@ -785,7 +785,7 @@ void LoginWindow::handleRegisterSucceeded(
 void LoginWindow::handleRegisterFailed(const QString &message)
 {
     CHATCLIENT_LOG_WARN("login.window")
-        << "register failed message="
+        << "注册失败，message="
         << message;
     setRegisterSubmitting(false);
     setRegisterStatusMessage(message, StatusTone::kError);
@@ -1049,7 +1049,7 @@ bool LoginWindow::performApplicationExitLogout(bool showConfirmation,
     if (!remoteLoggedOut)
     {
         CHATCLIENT_LOG_WARN("login.window")
-            << "application exit logout finished with local-only cleanup message="
+            << "程序退出时的登出流程已结束，仅执行了本地清理，message="
             << errorMessage;
     }
 

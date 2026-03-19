@@ -30,26 +30,26 @@ int main(int argc, char *argv[])
         chatclient::config::AppConfig::instance().displayName());
 
     CHATCLIENT_LOG_INFO("bootstrap")
-        << "config loaded from "
+        << "已加载配置文件："
         << chatclient::config::AppConfig::instance().configFilePath();
     if (chatclient::config::AppConfig::instance().isFileLogEnabled()) {
         CHATCLIENT_LOG_INFO("bootstrap")
-            << "file log enabled at "
+            << "已启用文件日志，路径："
             << chatclient::log::AppLogger::logFilePath();
     } else {
         CHATCLIENT_LOG_INFO("bootstrap")
-            << "file log disabled, console logging only";
+            << "未启用文件日志，仅输出到控制台";
     }
     CHATCLIENT_LOG_INFO("bootstrap")
-        << "HTTP base URL "
+        << "HTTP 基础地址："
         << chatclient::config::AppConfig::instance().httpBaseUrlText();
     CHATCLIENT_LOG_INFO("bootstrap")
-        << "WebSocket URL "
+        << "WebSocket 地址："
         << chatclient::config::AppConfig::instance().webSocketUrl().toString();
 
     LoginWindow login;
     login.show();
-    CHATCLIENT_LOG_INFO("bootstrap") << "login window shown";
+    CHATCLIENT_LOG_INFO("bootstrap") << "登录窗口已显示";
 
     // 进入主事件循环，直到应用退出。
     return app.exec();
