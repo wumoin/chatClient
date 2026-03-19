@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUrlQuery>
 
 namespace chatclient::config {
 namespace {
@@ -86,6 +87,44 @@ QUrl AppConfig::userAvatarUrl(const QString &userId) const
 {
     QString resolvedPath = userAvatarPathTemplate_;
     resolvedPath.replace(QStringLiteral("{user_id}"), userId);
+    return httpBaseUrl_.resolved(QUrl(resolvedPath));
+}
+
+QUrl AppConfig::userSearchUrl(const QString &account) const
+{
+    QUrl url = httpBaseUrl_.resolved(QUrl(userSearchPath_));
+    QUrlQuery query(url);
+    query.addQueryItem(QStringLiteral("account"), account);
+    url.setQuery(query);
+    return url;
+}
+
+QUrl AppConfig::friendSendRequestUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(friendSendRequestPath_));
+}
+
+QUrl AppConfig::friendOutgoingRequestsUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(friendOutgoingRequestsPath_));
+}
+
+QUrl AppConfig::friendIncomingRequestsUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(friendIncomingRequestsPath_));
+}
+
+QUrl AppConfig::friendAcceptRequestUrl(const QString &requestId) const
+{
+    QString resolvedPath = friendAcceptRequestPathTemplate_;
+    resolvedPath.replace(QStringLiteral("{request_id}"), requestId);
+    return httpBaseUrl_.resolved(QUrl(resolvedPath));
+}
+
+QUrl AppConfig::friendRejectRequestUrl(const QString &requestId) const
+{
+    QString resolvedPath = friendRejectRequestPathTemplate_;
+    resolvedPath.replace(QStringLiteral("{request_id}"), requestId);
     return httpBaseUrl_.resolved(QUrl(resolvedPath));
 }
 
@@ -252,6 +291,30 @@ bool AppConfig::load(QString *errorMessage)
                             QStringLiteral("user_avatar_path_template"),
                             &userAvatarPathTemplate_,
                             errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("user_search_path"),
+                            &userSearchPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("friend_send_request_path"),
+                            &friendSendRequestPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("friend_outgoing_requests_path"),
+                            &friendOutgoingRequestsPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("friend_incoming_requests_path"),
+                            &friendIncomingRequestsPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("friend_accept_request_path_template"),
+                            &friendAcceptRequestPathTemplate_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("friend_reject_request_path_template"),
+                            &friendRejectRequestPathTemplate_,
+                            errorMessage) ||
         !readRequiredString(wsValue.toObject(),
                             QStringLiteral("url"),
                             &webSocketUrlText,
@@ -344,13 +407,19 @@ bool AppConfig::load(QString *errorMessage)
         !loginPath_.startsWith(QLatin1Char('/')) ||
         !logoutPath_.startsWith(QLatin1Char('/')) ||
         !avatarTempUploadPath_.startsWith(QLatin1Char('/')) ||
-        !userAvatarPathTemplate_.startsWith(QLatin1Char('/')))
+        !userAvatarPathTemplate_.startsWith(QLatin1Char('/')) ||
+        !userSearchPath_.startsWith(QLatin1Char('/')) ||
+        !friendSendRequestPath_.startsWith(QLatin1Char('/')) ||
+        !friendOutgoingRequestsPath_.startsWith(QLatin1Char('/')) ||
+        !friendIncomingRequestsPath_.startsWith(QLatin1Char('/')) ||
+        !friendAcceptRequestPathTemplate_.startsWith(QLatin1Char('/')) ||
+        !friendRejectRequestPathTemplate_.startsWith(QLatin1Char('/')))
     {
         if (errorMessage)
         {
             *errorMessage =
                 QStringLiteral(
-                    "register_path、login_path、logout_path、avatar_temp_upload_path 和 user_avatar_path_template 必须以 / 开头");
+                    "register_path、login_path、logout_path、avatar_temp_upload_path、user_avatar_path_template、user_search_path、friend_send_request_path、friend_outgoing_requests_path、friend_incoming_requests_path、friend_accept_request_path_template 和 friend_reject_request_path_template 必须以 / 开头");
         }
         return false;
     }
@@ -362,6 +431,18 @@ bool AppConfig::load(QString *errorMessage)
             *errorMessage =
                 QStringLiteral(
                     "user_avatar_path_template 必须包含 {user_id} 占位符");
+        }
+        return false;
+    }
+
+    if (!friendAcceptRequestPathTemplate_.contains(QStringLiteral("{request_id}")) ||
+        !friendRejectRequestPathTemplate_.contains(QStringLiteral("{request_id}")))
+    {
+        if (errorMessage)
+        {
+            *errorMessage =
+                QStringLiteral(
+                    "friend_accept_request_path_template 和 friend_reject_request_path_template 必须包含 {request_id} 占位符");
         }
         return false;
     }

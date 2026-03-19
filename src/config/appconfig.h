@@ -91,6 +91,45 @@ public:
     QUrl userAvatarUrl(const QString &userId) const;
 
     /**
+     * @brief 返回按账号搜索用户接口完整地址。
+     * @param account 要搜索的目标账号。
+     * @return 自动附带 `account` 查询参数后的完整 URL。
+     */
+    QUrl userSearchUrl(const QString &account) const;
+
+    /**
+     * @brief 返回发送好友申请接口完整地址。
+     * @return 解析 `base_url + friend_send_request_path` 后得到的完整 URL。
+     */
+    QUrl friendSendRequestUrl() const;
+
+    /**
+     * @brief 返回我发出的好友申请列表接口完整地址。
+     * @return 解析 `base_url + friend_outgoing_requests_path` 后得到的完整 URL。
+     */
+    QUrl friendOutgoingRequestsUrl() const;
+
+    /**
+     * @brief 返回我收到的好友申请列表接口完整地址。
+     * @return 解析 `base_url + friend_incoming_requests_path` 后得到的完整 URL。
+     */
+    QUrl friendIncomingRequestsUrl() const;
+
+    /**
+     * @brief 返回同意好友申请接口完整地址。
+     * @param requestId 要处理的好友申请 ID。
+     * @return 将路径模板中的 `{request_id}` 替换后得到的完整 URL。
+     */
+    QUrl friendAcceptRequestUrl(const QString &requestId) const;
+
+    /**
+     * @brief 返回拒绝好友申请接口完整地址。
+     * @param requestId 要处理的好友申请 ID。
+     * @return 将路径模板中的 `{request_id}` 替换后得到的完整 URL。
+     */
+    QUrl friendRejectRequestUrl(const QString &requestId) const;
+
+    /**
      * @brief 返回 WebSocket 服务地址。
      * @return WebSocket 完整 URL。
      */
@@ -220,6 +259,12 @@ private:
     QString logoutPath_;
     QString avatarTempUploadPath_;
     QString userAvatarPathTemplate_;
+    QString userSearchPath_;
+    QString friendSendRequestPath_;
+    QString friendOutgoingRequestsPath_;
+    QString friendIncomingRequestsPath_;
+    QString friendAcceptRequestPathTemplate_;
+    QString friendRejectRequestPathTemplate_;
     QUrl webSocketUrl_;
     QString logAppName_;
     QString logMinimumLevel_ = QStringLiteral("INFO");

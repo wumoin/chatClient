@@ -357,6 +357,32 @@ QLabel#dialogSubtitle {
     font-size: 12px;
 }
 
+QLabel#dialogSectionTitle {
+    color: #173159;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QPushButton#dialogModeButton {
+    background: #eef4ff;
+    border: 1px solid #d4e0f6;
+    border-radius: 10px;
+    color: #2a4f83;
+    min-height: 36px;
+    padding: 0 16px;
+    font-weight: 600;
+}
+
+QPushButton#dialogModeButton:hover {
+    background: #e5eefc;
+}
+
+QPushButton#dialogModeButton:checked {
+    background: #1f6feb;
+    border: 1px solid #1a5ed0;
+    color: #ffffff;
+}
+
 QLabel#dialogEmptyHintLabel {
     color: #5f7493;
     font-size: 12px;
@@ -402,6 +428,90 @@ QLineEdit#dialogLineEdit {
 
 QLineEdit#dialogLineEdit:focus {
     border: 1px solid #6d9fe5;
+}
+
+QListWidget#dialogList {
+    background: #ffffff;
+    border: 1px solid #d9e4f5;
+    border-radius: 12px;
+    outline: none;
+    color: #29415f;
+    padding: 6px;
+}
+
+QListWidget#dialogList::item {
+    margin: 4px 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #f6f9ff;
+    border: 1px solid transparent;
+}
+
+QListWidget#dialogList::item:hover {
+    background: #edf4ff;
+    border: 1px solid #d5e1f4;
+}
+
+QFrame#incomingRequestCard {
+    background: #f7faff;
+    border: 1px solid #d9e4f5;
+    border-radius: 12px;
+}
+
+QLabel#incomingRequestTitle {
+    color: #12223f;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#incomingRequestMeta {
+    color: #5f7b9c;
+    font-size: 12px;
+}
+
+QLabel#incomingRequestDetail {
+    color: #425775;
+    font-size: 12px;
+}
+
+QPushButton#dialogInlinePrimaryButton,
+QPushButton#dialogInlineSecondaryButton {
+    min-height: 32px;
+    border-radius: 9px;
+    padding: 0 12px;
+    font-weight: 600;
+}
+
+QPushButton#dialogInlinePrimaryButton {
+    background: #1f6feb;
+    border: 1px solid #1a5ed0;
+    color: #ffffff;
+}
+
+QPushButton#dialogInlinePrimaryButton:hover {
+    background: #1a5ed0;
+}
+
+QPushButton#dialogInlinePrimaryButton:disabled {
+    background: #cddcf3;
+    border: 1px solid #c3d2ea;
+    color: #7e93b2;
+}
+
+QPushButton#dialogInlineSecondaryButton {
+    background: #eef4ff;
+    border: 1px solid #d4e0f6;
+    color: #2a4f83;
+}
+
+QPushButton#dialogInlineSecondaryButton:hover {
+    background: #e5eefc;
+}
+
+QPushButton#dialogInlineSecondaryButton:disabled {
+    background: #f3f6fb;
+    border: 1px solid #e0e7f2;
+    color: #93a3bb;
 }
 
 QPushButton#dialogSecondaryButton {

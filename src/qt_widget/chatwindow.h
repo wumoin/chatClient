@@ -18,6 +18,10 @@ namespace chatclient::api {
 class UserApiClient;
 }
 
+namespace chatclient::service {
+class AuthService;
+}
+
 // ChatWindow 当前承担“聊天主界面骨架”职责：
 // 1) 构建左侧导航栏、中间列表栏、右侧详情区三段式布局；
 // 2) 提供“消息 / 好友”两种主模式切换；
@@ -56,6 +60,12 @@ class ChatWindow : public QWidget
      * @param quitting true 表示当前执行“登出并退出程序”；false 表示执行“切换账号”。
      */
     void setSessionActionSubmitting(bool submitting, bool quitting);
+
+    /**
+     * @brief 为聊天窗口注入当前认证服务。
+     * @param authService 当前登录态服务，可为空。
+     */
+    void setAuthService(chatclient::service::AuthService *authService);
 
     /**
      * @brief 允许窗口在应用退出路径中直接关闭。
@@ -199,6 +209,7 @@ class ChatWindow : public QWidget
     QString m_currentConversationId;
     QTextEdit *m_messageEditor = nullptr;
     chatclient::api::UserApiClient *m_userApiClient = nullptr;
+    chatclient::service::AuthService *m_authService = nullptr;
 
     // 左下角：当前登录用户信息。
     QLabel *m_profileNameLabel = nullptr;

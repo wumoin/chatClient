@@ -6,6 +6,7 @@
 #include "model/messagemodel.h"
 #include "model/messagemodelregistry.h"
 #include "qt_widget/addfrienddialog.h"
+#include "service/auth_service.h"
 #include "view/messagelistview.h"
 
 #include <QAbstractItemView>
@@ -228,6 +229,11 @@ void ChatWindow::setSessionActionSubmitting(const bool submitting,
         m_profileStatusLabel->setText(quitting ? QStringLiteral("正在退出程序")
                                                : QStringLiteral("正在切换账号"));
     }
+}
+
+void ChatWindow::setAuthService(chatclient::service::AuthService *authService)
+{
+    m_authService = authService;
 }
 
 void ChatWindow::allowWindowClose()
@@ -769,7 +775,7 @@ void ChatWindow::handleFriendSelectionChanged()
 
 void ChatWindow::showAddFriendDialog()
 {
-    AddFriendDialog dialog(this);
+    AddFriendDialog dialog(m_authService, this);
     dialog.exec();
 }
 

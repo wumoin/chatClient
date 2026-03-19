@@ -11,7 +11,13 @@
             "login_path": "/api/v1/auth/login",
             "logout_path": "/api/v1/auth/logout",
             "avatar_temp_upload_path": "/api/v1/users/avatar/temp",
-            "user_avatar_path_template": "/api/v1/users/{user_id}/avatar"
+            "user_avatar_path_template": "/api/v1/users/{user_id}/avatar",
+            "user_search_path": "/api/v1/users/search",
+            "friend_send_request_path": "/api/v1/friends/requests",
+            "friend_outgoing_requests_path": "/api/v1/friends/requests/outgoing",
+            "friend_incoming_requests_path": "/api/v1/friends/requests/incoming",
+            "friend_accept_request_path_template": "/api/v1/friends/requests/{request_id}/accept",
+            "friend_reject_request_path_template": "/api/v1/friends/requests/{request_id}/reject"
         },
         "ws": {
             "url": "ws://127.0.0.1:8848/ws"

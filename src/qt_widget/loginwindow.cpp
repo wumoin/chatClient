@@ -988,6 +988,7 @@ void LoginWindow::openChatWindow(
 {
     if (!m_chatWindow) {
         m_chatWindow = new ChatWindow();
+        m_chatWindow->setAuthService(m_authService);
         connect(m_chatWindow,
                 &ChatWindow::switchAccountRequested,
                 this,
