@@ -9,8 +9,96 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUuid>
+#include <QUrlQuery>
 
 namespace chatclient::api {
+namespace {
+
+template <typename ResponseDto, typename ParseSuccessFn, typename SuccessHandler,
+          typename FailureHandler>
+void handleConversationReply(QNetworkReply *reply,
+                             const QString &requestId,
+                             const QString &fallbackMessage,
+                             ParseSuccessFn parseSuccess,
+                             SuccessHandler onSuccess,
+                             FailureHandler onFailure,
+                             const char *successLogTag,
+                             std::function<QString(const ResponseDto &)> successLogMessage)
+{
+    const int httpStatus =
+        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QByteArray responseBody = reply->readAll();
+    const QString resolvedFallbackMessage =
+        reply->error() == QNetworkReply::NoError ? fallbackMessage
+                                                 : reply->errorString();
+
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(responseBody, &parseError);
+    const bool hasJsonObject =
+        parseError.error == QJsonParseError::NoError && document.isObject();
+
+    if (httpStatus >= 200 && httpStatus < 300 && hasJsonObject)
+    {
+        ResponseDto response;
+        QString errorMessage;
+        if (parseSuccess(document.object(), &response, &errorMessage))
+        {
+            if (response.requestId.isEmpty())
+            {
+                response.requestId = requestId;
+            }
+
+            CHATCLIENT_LOG_INFO(successLogTag) << successLogMessage(response);
+            if (onSuccess)
+            {
+                onSuccess(response);
+            }
+            reply->deleteLater();
+            return;
+        }
+
+        if (onFailure)
+        {
+            chatclient::dto::conversation::ApiErrorDto error;
+            error.httpStatus = httpStatus;
+            error.errorCode = 50000;
+            error.requestId = requestId;
+            error.message =
+                errorMessage.isEmpty() ? resolvedFallbackMessage : errorMessage;
+            onFailure(error);
+        }
+
+        reply->deleteLater();
+        return;
+    }
+
+    if (onFailure)
+    {
+        if (hasJsonObject)
+        {
+            auto error = chatclient::dto::conversation::parseApiErrorResponse(
+                document.object(), httpStatus, resolvedFallbackMessage);
+            if (error.requestId.isEmpty())
+            {
+                error.requestId = requestId;
+            }
+            onFailure(error);
+        }
+        else
+        {
+            chatclient::dto::conversation::ApiErrorDto error;
+            error.httpStatus = httpStatus;
+            error.requestId = requestId;
+            error.message = resolvedFallbackMessage;
+            onFailure(error);
+        }
+    }
+
+    reply->deleteLater();
+}
+
+}  // namespace
 
 ConversationApiClient::ConversationApiClient(QObject *parent)
     : QObject(parent),
@@ -55,90 +143,224 @@ void ConversationApiClient::createPrivateConversation(
              requestId,
              onSuccess = std::move(onSuccess),
              onFailure = std::move(onFailure)]() mutable {
-                const int httpStatus =
-                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
-                        .toInt();
-                const QByteArray responseBody = reply->readAll();
-                const QString fallbackMessage =
-                    reply->error() == QNetworkReply::NoError
-                        ? QStringLiteral("服务端返回了无法识别的会话响应")
-                        : reply->errorString();
+                handleConversationReply<
+                    chatclient::dto::conversation::
+                        CreatePrivateConversationResponseDto>(
+                    reply,
+                    requestId,
+                    QStringLiteral("服务端返回了无法识别的会话响应"),
+                    chatclient::dto::conversation::
+                        parseCreatePrivateConversationSuccessResponse,
+                    std::move(onSuccess),
+                    std::move(onFailure),
+                    "conversation.api",
+                    [](const auto &response) {
+                        return QStringLiteral("创建私聊会话成功，request_id=%1 conversation_id=%2")
+                            .arg(response.requestId,
+                                 response.conversation.conversationId);
+                    });
+            });
+}
 
-                QJsonParseError parseError;
-                const QJsonDocument document =
-                    QJsonDocument::fromJson(responseBody, &parseError);
-                const bool hasJsonObject =
-                    parseError.error == QJsonParseError::NoError &&
-                    document.isObject();
+void ConversationApiClient::fetchConversations(
+    const QString &accessToken,
+    ConversationListSuccessHandler onSuccess,
+    ConversationListFailureHandler onFailure)
+{
+    const QString requestId = createRequestId(QStringLiteral("list"));
+    const QUrl url =
+        chatclient::config::AppConfig::instance().conversationListUrl();
 
-                if (httpStatus >= 200 && httpStatus < 300 && hasJsonObject)
-                {
-                    chatclient::dto::conversation::CreatePrivateConversationResponseDto response;
-                    QString errorMessage;
-                    if (chatclient::dto::conversation::
-                            parseCreatePrivateConversationSuccessResponse(
-                                document.object(), &response, &errorMessage))
-                    {
-                        if (response.requestId.isEmpty())
-                        {
-                            response.requestId = requestId;
-                        }
+    CHATCLIENT_LOG_INFO("conversation.api")
+        << "开始获取会话列表，request_id=" << requestId
+        << " url=" << url.toString();
 
-                        CHATCLIENT_LOG_INFO("conversation.api")
-                            << "创建私聊会话成功，request_id="
-                            << response.requestId
-                            << " conversation_id="
-                            << response.conversation.conversationId;
+    QNetworkRequest networkRequest(url);
+    applyRequestHeaders(&networkRequest, requestId);
+    applyAuthorizationHeader(&networkRequest, accessToken);
 
-                        if (onSuccess)
-                        {
-                            onSuccess(response);
-                        }
+    QNetworkReply *reply = m_networkAccessManager->get(networkRequest);
+    connect(reply,
+            &QNetworkReply::finished,
+            this,
+            [reply,
+             requestId,
+             onSuccess = std::move(onSuccess),
+             onFailure = std::move(onFailure)]() mutable {
+                handleConversationReply<
+                    chatclient::dto::conversation::ConversationListResponseDto>(
+                    reply,
+                    requestId,
+                    QStringLiteral("服务端返回了无法识别的会话列表响应"),
+                    chatclient::dto::conversation::
+                        parseConversationListSuccessResponse,
+                    std::move(onSuccess),
+                    std::move(onFailure),
+                    "conversation.api",
+                    [](const auto &response) {
+                        return QStringLiteral("会话列表获取成功，request_id=%1 count=%2")
+                            .arg(response.requestId)
+                            .arg(response.conversations.size());
+                    });
+            });
+}
 
-                        reply->deleteLater();
-                        return;
-                    }
+void ConversationApiClient::fetchConversationDetail(
+    const QString &accessToken,
+    const QString &conversationId,
+    ConversationDetailSuccessHandler onSuccess,
+    ConversationDetailFailureHandler onFailure)
+{
+    const QString requestId = createRequestId(QStringLiteral("detail"));
+    const QUrl url = chatclient::config::AppConfig::instance()
+                         .conversationDetailUrl(conversationId);
 
-                    if (onFailure)
-                    {
-                        chatclient::dto::conversation::ApiErrorDto error;
-                        error.httpStatus = httpStatus;
-                        error.errorCode = 50000;
-                        error.requestId = requestId;
-                        error.message = errorMessage.isEmpty()
-                                            ? fallbackMessage
-                                            : errorMessage;
-                        onFailure(error);
-                    }
+    CHATCLIENT_LOG_INFO("conversation.api")
+        << "开始获取会话详情，request_id=" << requestId
+        << " conversation_id=" << conversationId
+        << " url=" << url.toString();
 
-                    reply->deleteLater();
-                    return;
-                }
+    QNetworkRequest networkRequest(url);
+    applyRequestHeaders(&networkRequest, requestId);
+    applyAuthorizationHeader(&networkRequest, accessToken);
 
-                if (onFailure)
-                {
-                    if (hasJsonObject)
-                    {
-                        auto error =
-                            chatclient::dto::conversation::parseApiErrorResponse(
-                                document.object(), httpStatus, fallbackMessage);
-                        if (error.requestId.isEmpty())
-                        {
-                            error.requestId = requestId;
-                        }
-                        onFailure(error);
-                    }
-                    else
-                    {
-                        chatclient::dto::conversation::ApiErrorDto error;
-                        error.httpStatus = httpStatus;
-                        error.requestId = requestId;
-                        error.message = fallbackMessage;
-                        onFailure(error);
-                    }
-                }
+    QNetworkReply *reply = m_networkAccessManager->get(networkRequest);
+    connect(reply,
+            &QNetworkReply::finished,
+            this,
+            [reply,
+             requestId,
+             onSuccess = std::move(onSuccess),
+             onFailure = std::move(onFailure)]() mutable {
+                handleConversationReply<
+                    chatclient::dto::conversation::ConversationDetailResponseDto>(
+                    reply,
+                    requestId,
+                    QStringLiteral("服务端返回了无法识别的会话详情响应"),
+                    chatclient::dto::conversation::
+                        parseConversationDetailSuccessResponse,
+                    std::move(onSuccess),
+                    std::move(onFailure),
+                    "conversation.api",
+                    [](const auto &response) {
+                        return QStringLiteral("会话详情获取成功，request_id=%1 conversation_id=%2")
+                            .arg(response.requestId,
+                                 response.conversation.conversationId);
+                    });
+            });
+}
 
-                reply->deleteLater();
+void ConversationApiClient::fetchConversationMessages(
+    const QString &accessToken,
+    const QString &conversationId,
+    const chatclient::dto::conversation::ListConversationMessagesRequestDto &request,
+    ConversationMessagesSuccessHandler onSuccess,
+    ConversationMessagesFailureHandler onFailure)
+{
+    const QString requestId = createRequestId(QStringLiteral("messages"));
+    QUrl url = chatclient::config::AppConfig::instance().conversationMessagesUrl(
+        conversationId);
+    QUrlQuery query(url);
+    query.addQueryItem(QStringLiteral("limit"),
+                       QString::number(request.limit));
+    if (request.hasBeforeSeq)
+    {
+        query.addQueryItem(QStringLiteral("before_seq"),
+                           QString::number(request.beforeSeq));
+    }
+    if (request.hasAfterSeq)
+    {
+        query.addQueryItem(QStringLiteral("after_seq"),
+                           QString::number(request.afterSeq));
+    }
+    url.setQuery(query);
+
+    CHATCLIENT_LOG_INFO("conversation.api")
+        << "开始获取会话历史消息，request_id=" << requestId
+        << " conversation_id=" << conversationId
+        << " url=" << url.toString();
+
+    QNetworkRequest networkRequest(url);
+    applyRequestHeaders(&networkRequest, requestId);
+    applyAuthorizationHeader(&networkRequest, accessToken);
+
+    QNetworkReply *reply = m_networkAccessManager->get(networkRequest);
+    connect(reply,
+            &QNetworkReply::finished,
+            this,
+            [reply,
+             requestId,
+             onSuccess = std::move(onSuccess),
+             onFailure = std::move(onFailure)]() mutable {
+                handleConversationReply<
+                    chatclient::dto::conversation::
+                        ConversationMessageListResponseDto>(
+                    reply,
+                    requestId,
+                    QStringLiteral("服务端返回了无法识别的历史消息响应"),
+                    chatclient::dto::conversation::
+                        parseConversationMessagesSuccessResponse,
+                    std::move(onSuccess),
+                    std::move(onFailure),
+                    "conversation.api",
+                    [](const auto &response) {
+                        return QStringLiteral("历史消息获取成功，request_id=%1 count=%2 has_more=%3")
+                            .arg(response.requestId)
+                            .arg(response.items.size())
+                            .arg(response.hasMore);
+                    });
+            });
+}
+
+void ConversationApiClient::sendTextMessage(
+    const QString &accessToken,
+    const QString &conversationId,
+    const chatclient::dto::conversation::SendTextMessageRequestDto &request,
+    SendTextMessageSuccessHandler onSuccess,
+    SendTextMessageFailureHandler onFailure)
+{
+    const QString requestId = createRequestId(QStringLiteral("send_text"));
+    const QUrl url = chatclient::config::AppConfig::instance()
+                         .conversationSendTextUrl(conversationId);
+
+    CHATCLIENT_LOG_INFO("conversation.api")
+        << "开始发送文本消息，request_id=" << requestId
+        << " conversation_id=" << conversationId
+        << " url=" << url.toString();
+
+    QNetworkRequest networkRequest(url);
+    applyRequestHeaders(&networkRequest, requestId);
+    applyJsonRequestHeader(&networkRequest);
+    applyAuthorizationHeader(&networkRequest, accessToken);
+
+    const QByteArray requestBody =
+        QJsonDocument(chatclient::dto::conversation::toJsonObject(request))
+            .toJson(QJsonDocument::Compact);
+    QNetworkReply *reply =
+        m_networkAccessManager->post(networkRequest, requestBody);
+
+    connect(reply,
+            &QNetworkReply::finished,
+            this,
+            [reply,
+             requestId,
+             onSuccess = std::move(onSuccess),
+             onFailure = std::move(onFailure)]() mutable {
+                handleConversationReply<
+                    chatclient::dto::conversation::SendTextMessageResponseDto>(
+                    reply,
+                    requestId,
+                    QStringLiteral("服务端返回了无法识别的文本消息响应"),
+                    chatclient::dto::conversation::
+                        parseSendTextMessageSuccessResponse,
+                    std::move(onSuccess),
+                    std::move(onFailure),
+                    "conversation.api",
+                    [](const auto &response) {
+                        return QStringLiteral("文本消息发送成功，request_id=%1 message_id=%2 seq=%3")
+                            .arg(response.requestId, response.message.messageId)
+                            .arg(response.message.seq);
+                    });
             });
 }
 

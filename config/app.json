@@ -19,7 +19,11 @@
             "friend_incoming_requests_path": "/api/v1/friends/requests/incoming",
             "friend_accept_request_path_template": "/api/v1/friends/requests/{request_id}/accept",
             "friend_reject_request_path_template": "/api/v1/friends/requests/{request_id}/reject",
-            "conversation_private_path": "/api/v1/conversations/private"
+            "conversation_private_path": "/api/v1/conversations/private",
+            "conversation_list_path": "/api/v1/conversations",
+            "conversation_detail_path_template": "/api/v1/conversations/{conversation_id}",
+            "conversation_messages_path_template": "/api/v1/conversations/{conversation_id}/messages",
+            "conversation_send_text_path_template": "/api/v1/conversations/{conversation_id}/messages/text"
         },
         "ws": {
             "url": "ws://127.0.0.1:8848/ws"

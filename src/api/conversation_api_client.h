@@ -14,8 +14,12 @@ namespace chatclient::api {
 /**
  * @brief 会话域 HTTP API 客户端。
  *
- * 当前只承接一条最小链路：
- * 1) 创建或复用一对一私聊会话。
+ * 当前承接会话域 5 条 HTTP 链路，但先不强制接入界面状态管理：
+ * 1) 创建或复用一对一私聊会话；
+ * 2) 获取当前用户会话列表；
+ * 3) 获取指定会话详情；
+ * 4) 获取指定会话历史消息；
+ * 5) 发送文本消息。
  */
 class ConversationApiClient : public QObject
 {
@@ -25,6 +29,22 @@ class ConversationApiClient : public QObject
     using CreatePrivateConversationSuccessHandler = std::function<void(
         const chatclient::dto::conversation::CreatePrivateConversationResponseDto &)>;
     using CreatePrivateConversationFailureHandler =
+        std::function<void(const chatclient::dto::conversation::ApiErrorDto &)>;
+    using ConversationListSuccessHandler =
+        std::function<void(const chatclient::dto::conversation::ConversationListResponseDto &)>;
+    using ConversationListFailureHandler =
+        std::function<void(const chatclient::dto::conversation::ApiErrorDto &)>;
+    using ConversationDetailSuccessHandler = std::function<void(
+        const chatclient::dto::conversation::ConversationDetailResponseDto &)>;
+    using ConversationDetailFailureHandler =
+        std::function<void(const chatclient::dto::conversation::ApiErrorDto &)>;
+    using ConversationMessagesSuccessHandler = std::function<void(
+        const chatclient::dto::conversation::ConversationMessageListResponseDto &)>;
+    using ConversationMessagesFailureHandler =
+        std::function<void(const chatclient::dto::conversation::ApiErrorDto &)>;
+    using SendTextMessageSuccessHandler =
+        std::function<void(const chatclient::dto::conversation::SendTextMessageResponseDto &)>;
+    using SendTextMessageFailureHandler =
         std::function<void(const chatclient::dto::conversation::ApiErrorDto &)>;
 
     /**
@@ -45,6 +65,58 @@ class ConversationApiClient : public QObject
         const chatclient::dto::conversation::CreatePrivateConversationRequestDto &request,
         CreatePrivateConversationSuccessHandler onSuccess,
         CreatePrivateConversationFailureHandler onFailure);
+
+    /**
+     * @brief 获取当前登录用户的会话列表。
+     * @param accessToken 当前登录态 access token。
+     * @param onSuccess 成功回调。
+     * @param onFailure 失败回调。
+     */
+    void fetchConversations(const QString &accessToken,
+                            ConversationListSuccessHandler onSuccess,
+                            ConversationListFailureHandler onFailure);
+
+    /**
+     * @brief 获取指定会话详情。
+     * @param accessToken 当前登录态 access token。
+     * @param conversationId 目标会话 ID。
+     * @param onSuccess 成功回调。
+     * @param onFailure 失败回调。
+     */
+    void fetchConversationDetail(const QString &accessToken,
+                                 const QString &conversationId,
+                                 ConversationDetailSuccessHandler onSuccess,
+                                 ConversationDetailFailureHandler onFailure);
+
+    /**
+     * @brief 获取指定会话历史消息。
+     * @param accessToken 当前登录态 access token。
+     * @param conversationId 目标会话 ID。
+     * @param request 历史消息查询请求 DTO。
+     * @param onSuccess 成功回调。
+     * @param onFailure 失败回调。
+     */
+    void fetchConversationMessages(
+        const QString &accessToken,
+        const QString &conversationId,
+        const chatclient::dto::conversation::ListConversationMessagesRequestDto &request,
+        ConversationMessagesSuccessHandler onSuccess,
+        ConversationMessagesFailureHandler onFailure);
+
+    /**
+     * @brief 向指定会话发送文本消息。
+     * @param accessToken 当前登录态 access token。
+     * @param conversationId 目标会话 ID。
+     * @param request 文本消息请求 DTO。
+     * @param onSuccess 成功回调。
+     * @param onFailure 失败回调。
+     */
+    void sendTextMessage(
+        const QString &accessToken,
+        const QString &conversationId,
+        const chatclient::dto::conversation::SendTextMessageRequestDto &request,
+        SendTextMessageSuccessHandler onSuccess,
+        SendTextMessageFailureHandler onFailure);
 
   private:
     /**

@@ -142,6 +142,33 @@ public:
     QUrl conversationPrivateUrl() const;
 
     /**
+     * @brief 返回当前用户会话列表接口完整地址。
+     * @return 解析 `base_url + conversation_list_path` 后得到的完整 URL。
+     */
+    QUrl conversationListUrl() const;
+
+    /**
+     * @brief 返回指定会话详情接口完整地址。
+     * @param conversationId 目标会话 ID。
+     * @return 将路径模板中的 `{conversation_id}` 替换后得到的完整 URL。
+     */
+    QUrl conversationDetailUrl(const QString &conversationId) const;
+
+    /**
+     * @brief 返回指定会话历史消息接口完整地址。
+     * @param conversationId 目标会话 ID。
+     * @return 将路径模板中的 `{conversation_id}` 替换后得到的完整 URL。
+     */
+    QUrl conversationMessagesUrl(const QString &conversationId) const;
+
+    /**
+     * @brief 返回指定会话发送文本消息接口完整地址。
+     * @param conversationId 目标会话 ID。
+     * @return 将路径模板中的 `{conversation_id}` 替换后得到的完整 URL。
+     */
+    QUrl conversationSendTextUrl(const QString &conversationId) const;
+
+    /**
      * @brief 返回 WebSocket 服务地址。
      * @return WebSocket 完整 URL。
      */
@@ -279,6 +306,10 @@ private:
     QString friendAcceptRequestPathTemplate_;
     QString friendRejectRequestPathTemplate_;
     QString conversationPrivatePath_;
+    QString conversationListPath_;
+    QString conversationDetailPathTemplate_;
+    QString conversationMessagesPathTemplate_;
+    QString conversationSendTextPathTemplate_;
     QUrl webSocketUrl_;
     QString logAppName_;
     QString logMinimumLevel_ = QStringLiteral("INFO");

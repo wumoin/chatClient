@@ -138,6 +138,32 @@ QUrl AppConfig::conversationPrivateUrl() const
     return httpBaseUrl_.resolved(QUrl(conversationPrivatePath_));
 }
 
+QUrl AppConfig::conversationListUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(conversationListPath_));
+}
+
+QUrl AppConfig::conversationDetailUrl(const QString &conversationId) const
+{
+    QString resolvedPath = conversationDetailPathTemplate_;
+    resolvedPath.replace(QStringLiteral("{conversation_id}"), conversationId);
+    return httpBaseUrl_.resolved(QUrl(resolvedPath));
+}
+
+QUrl AppConfig::conversationMessagesUrl(const QString &conversationId) const
+{
+    QString resolvedPath = conversationMessagesPathTemplate_;
+    resolvedPath.replace(QStringLiteral("{conversation_id}"), conversationId);
+    return httpBaseUrl_.resolved(QUrl(resolvedPath));
+}
+
+QUrl AppConfig::conversationSendTextUrl(const QString &conversationId) const
+{
+    QString resolvedPath = conversationSendTextPathTemplate_;
+    resolvedPath.replace(QStringLiteral("{conversation_id}"), conversationId);
+    return httpBaseUrl_.resolved(QUrl(resolvedPath));
+}
+
 const QUrl &AppConfig::webSocketUrl() const
 {
     return webSocketUrl_;
@@ -332,6 +358,22 @@ bool AppConfig::load(QString *errorMessage)
         !readRequiredString(httpValue.toObject(),
                             QStringLiteral("conversation_private_path"),
                             &conversationPrivatePath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("conversation_list_path"),
+                            &conversationListPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("conversation_detail_path_template"),
+                            &conversationDetailPathTemplate_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("conversation_messages_path_template"),
+                            &conversationMessagesPathTemplate_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("conversation_send_text_path_template"),
+                            &conversationSendTextPathTemplate_,
                             errorMessage) ||
         !readRequiredString(wsValue.toObject(),
                             QStringLiteral("url"),
