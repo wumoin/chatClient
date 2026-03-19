@@ -136,6 +136,12 @@ public:
     QUrl friendRejectRequestUrl(const QString &requestId) const;
 
     /**
+     * @brief 返回创建或复用私聊会话接口完整地址。
+     * @return 解析 `base_url + conversation_private_path` 后得到的完整 URL。
+     */
+    QUrl conversationPrivateUrl() const;
+
+    /**
      * @brief 返回 WebSocket 服务地址。
      * @return WebSocket 完整 URL。
      */
@@ -272,6 +278,7 @@ private:
     QString friendIncomingRequestsPath_;
     QString friendAcceptRequestPathTemplate_;
     QString friendRejectRequestPathTemplate_;
+    QString conversationPrivatePath_;
     QUrl webSocketUrl_;
     QString logAppName_;
     QString logMinimumLevel_ = QStringLiteral("INFO");

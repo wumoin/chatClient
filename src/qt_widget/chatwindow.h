@@ -17,6 +17,7 @@ class MessageListView;
 class MessageModelRegistry;
 
 namespace chatclient::api {
+class ConversationApiClient;
 class UserApiClient;
 }
 
@@ -208,6 +209,11 @@ class ChatWindow : public QWidget
      */
     void handleSendMessage();
 
+    /**
+     * @brief 从好友详情页发起或复用一对一私聊会话。
+     */
+    void handleStartPrivateConversation();
+
     SidebarSection m_currentSection{SidebarSection::kMessages};
 
     // 左侧导航栏：消息 / 好友两种主入口。
@@ -233,12 +239,14 @@ class ChatWindow : public QWidget
     QLabel *m_friendDetailTitleLabel = nullptr;
     QLabel *m_friendDetailMetaLabel = nullptr;
     QLabel *m_friendDetailHintLabel = nullptr;
+    QPushButton *m_startChatButton = nullptr;
 
     // 消息页：仍然沿用现有 QListView + model + delegate 展示链路。
     MessageListView *m_messageListView = nullptr;
     MessageModelRegistry *m_messageModelRegistry = nullptr;
     QString m_currentConversationId;
     QTextEdit *m_messageEditor = nullptr;
+    chatclient::api::ConversationApiClient *m_conversationApiClient = nullptr;
     chatclient::api::UserApiClient *m_userApiClient = nullptr;
     chatclient::service::AuthService *m_authService = nullptr;
     chatclient::service::FriendService *m_friendService = nullptr;

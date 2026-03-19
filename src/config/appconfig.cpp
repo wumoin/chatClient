@@ -133,6 +133,11 @@ QUrl AppConfig::friendRejectRequestUrl(const QString &requestId) const
     return httpBaseUrl_.resolved(QUrl(resolvedPath));
 }
 
+QUrl AppConfig::conversationPrivateUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(conversationPrivatePath_));
+}
+
 const QUrl &AppConfig::webSocketUrl() const
 {
     return webSocketUrl_;
@@ -324,6 +329,10 @@ bool AppConfig::load(QString *errorMessage)
                             QStringLiteral("friend_reject_request_path_template"),
                             &friendRejectRequestPathTemplate_,
                             errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("conversation_private_path"),
+                            &conversationPrivatePath_,
+                            errorMessage) ||
         !readRequiredString(wsValue.toObject(),
                             QStringLiteral("url"),
                             &webSocketUrlText,
@@ -422,13 +431,14 @@ bool AppConfig::load(QString *errorMessage)
         !friendOutgoingRequestsPath_.startsWith(QLatin1Char('/')) ||
         !friendIncomingRequestsPath_.startsWith(QLatin1Char('/')) ||
         !friendAcceptRequestPathTemplate_.startsWith(QLatin1Char('/')) ||
-        !friendRejectRequestPathTemplate_.startsWith(QLatin1Char('/')))
+        !friendRejectRequestPathTemplate_.startsWith(QLatin1Char('/')) ||
+        !conversationPrivatePath_.startsWith(QLatin1Char('/')))
     {
         if (errorMessage)
         {
             *errorMessage =
                 QStringLiteral(
-                    "register_path、login_path、logout_path、avatar_temp_upload_path、user_avatar_path_template、user_search_path、friend_send_request_path、friend_outgoing_requests_path、friend_incoming_requests_path、friend_accept_request_path_template 和 friend_reject_request_path_template 必须以 / 开头");
+                    "register_path、login_path、logout_path、avatar_temp_upload_path、user_avatar_path_template、user_search_path、friend_send_request_path、friend_outgoing_requests_path、friend_incoming_requests_path、friend_accept_request_path_template、friend_reject_request_path_template 和 conversation_private_path 必须以 / 开头");
         }
         return false;
     }

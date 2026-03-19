@@ -18,7 +18,8 @@
             "friend_outgoing_requests_path": "/api/v1/friends/requests/outgoing",
             "friend_incoming_requests_path": "/api/v1/friends/requests/incoming",
             "friend_accept_request_path_template": "/api/v1/friends/requests/{request_id}/accept",
-            "friend_reject_request_path_template": "/api/v1/friends/requests/{request_id}/reject"
+            "friend_reject_request_path_template": "/api/v1/friends/requests/{request_id}/reject",
+            "conversation_private_path": "/api/v1/conversations/private"
         },
         "ws": {
             "url": "ws://127.0.0.1:8848/ws"

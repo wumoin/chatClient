@@ -1,7 +1,9 @@
 #include "chatwindow.h"
 
+#include "api/conversation_api_client.h"
 #include "api/user_api_client.h"
 #include "config/appconfig.h"
+#include "dto/conversation_dto.h"
 #include "log/app_logger.h"
 #include "model/messagemodel.h"
 #include "model/messagemodelregistry.h"
@@ -42,6 +44,41 @@ constexpr int kFriendMetaRole = Qt::UserRole + 5;
 constexpr int kFriendHintRole = Qt::UserRole + 6;
 constexpr int kFriendUserIdRole = Qt::UserRole + 7;
 constexpr int kFriendAvatarStorageKeyRole = Qt::UserRole + 8;
+
+QString localizeCreateConversationError(
+    const chatclient::dto::conversation::ApiErrorDto &error)
+{
+    switch (error.errorCode)
+    {
+    case 40102:
+        return QStringLiteral("当前登录状态已失效，请重新登录");
+    case 40300:
+        return QStringLiteral("当前无法和该用户建立私聊");
+    case 40400:
+        return QStringLiteral("目标会话或目标用户不存在");
+    case 40001:
+        return QStringLiteral("发起私聊请求参数不正确");
+    default:
+        break;
+    }
+
+    if (error.message == QStringLiteral("peer user not found"))
+    {
+        return QStringLiteral("目标用户不存在");
+    }
+
+    if (error.message == QStringLiteral("peer user is not your friend"))
+    {
+        return QStringLiteral("当前只能和好友建立私聊");
+    }
+
+    if (error.message == QStringLiteral("invalid access token"))
+    {
+        return QStringLiteral("当前登录状态已失效，请重新登录");
+    }
+
+    return QStringLiteral("建立私聊失败，请稍后重试");
+}
 
 QString loadChatStyleSheet()
 {
@@ -91,6 +128,7 @@ ChatWindow::ChatWindow(QWidget *parent)
     : QWidget(parent)
 {
     const auto &config = chatclient::config::AppConfig::instance();
+    m_conversationApiClient = new chatclient::api::ConversationApiClient(this);
     m_userApiClient = new chatclient::api::UserApiClient(this);
 
     // 聊天主界面当前改成三段式结构：
@@ -724,14 +762,19 @@ QWidget *ChatWindow::createFriendContentPage()
     actionRow->setContentsMargins(0, 0, 0, 0);
     actionRow->setSpacing(10);
 
-    auto *startChatButton = new QPushButton(QStringLiteral("发起会话"), panel);
-    startChatButton->setObjectName(QStringLiteral("panelGhostButton"));
+    m_startChatButton = new QPushButton(QStringLiteral("发起会话"), panel);
+    m_startChatButton->setObjectName(QStringLiteral("panelGhostButton"));
     auto *viewProfileButton = new QPushButton(QStringLiteral("查看资料"), panel);
     viewProfileButton->setObjectName(QStringLiteral("panelGhostButton"));
 
-    actionRow->addWidget(startChatButton);
+    actionRow->addWidget(m_startChatButton);
     actionRow->addWidget(viewProfileButton);
     actionRow->addStretch(1);
+
+    connect(m_startChatButton,
+            &QPushButton::clicked,
+            this,
+            &ChatWindow::handleStartPrivateConversation);
 
     // auto *placeholderCard = new QFrame(panel);
     // placeholderCard->setObjectName(QStringLiteral("friendPlaceholderCard"));
@@ -783,6 +826,106 @@ void ChatWindow::switchSection(const SidebarSection section)
         refreshFriendList(true);
         handleFriendSelectionChanged();
     }
+}
+
+void ChatWindow::handleStartPrivateConversation()
+{
+    if (!m_startChatButton || !m_friendDetailHintLabel)
+    {
+        return;
+    }
+
+    if (!m_authService || !m_authService->hasActiveSession())
+    {
+        m_friendDetailHintLabel->setText(
+            QStringLiteral("当前登录状态不可用，请重新登录后再发起私聊。"));
+        return;
+    }
+
+    const QString peerUserId = m_currentSelectedFriendUserId.trimmed();
+    if (peerUserId.isEmpty())
+    {
+        m_friendDetailHintLabel->setText(
+            QStringLiteral("请先在好友列表中选择一个好友。"));
+        return;
+    }
+
+    if (!m_conversationApiClient)
+    {
+        m_friendDetailHintLabel->setText(
+            QStringLiteral("会话接口客户端尚未初始化。"));
+        return;
+    }
+
+    const QString peerName =
+        m_friendDetailTitleLabel ? m_friendDetailTitleLabel->text().trimmed()
+                                 : QString();
+    chatclient::dto::conversation::CreatePrivateConversationRequestDto request;
+    request.peerUserId = peerUserId;
+
+    m_startChatButton->setEnabled(false);
+    m_startChatButton->setText(QStringLiteral("创建中..."));
+    m_friendDetailHintLabel->setText(
+        QStringLiteral("正在为你和 %1 创建或复用私聊会话。")
+            .arg(peerName.isEmpty() ? QStringLiteral("该好友") : peerName));
+
+    const QString accessToken =
+        m_authService->currentSession().accessToken.trimmed();
+    m_conversationApiClient->createPrivateConversation(
+        accessToken,
+        request,
+        [this, peerName](
+            const chatclient::dto::conversation::
+                CreatePrivateConversationResponseDto &response) {
+            if (m_startChatButton)
+            {
+                m_startChatButton->setEnabled(true);
+                m_startChatButton->setText(QStringLiteral("发起会话"));
+            }
+
+            m_currentConversationId = response.conversation.conversationId;
+
+            CHATCLIENT_LOG_INFO("chat.window")
+                << "private conversation created request_id="
+                << response.requestId
+                << " conversation_id="
+                << response.conversation.conversationId
+                << " peer_user_id="
+                << response.conversation.peerUser.userId;
+
+            if (m_friendDetailHintLabel)
+            {
+                m_friendDetailHintLabel->setText(
+                    QStringLiteral("已为你和 %1 建立私聊，会话 ID：%2。后续接入真实会话列表后会在消息页展示。")
+                        .arg(peerName.isEmpty()
+                                 ? response.conversation.peerUser.nickname
+                                 : peerName,
+                             response.conversation.conversationId));
+            }
+        },
+        [this](const chatclient::dto::conversation::ApiErrorDto &error) {
+            if (m_startChatButton)
+            {
+                m_startChatButton->setEnabled(true);
+                m_startChatButton->setText(QStringLiteral("发起会话"));
+            }
+
+            CHATCLIENT_LOG_WARN("chat.window")
+                << "failed to create private conversation request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+
+            if (m_friendDetailHintLabel)
+            {
+                m_friendDetailHintLabel->setText(
+                    localizeCreateConversationError(error));
+            }
+        });
 }
 
 void ChatWindow::handleSessionSelectionChanged()
