@@ -16,6 +16,7 @@
 #include <QCloseEvent>
 #include <QColor>
 #include <QFile>
+#include <QFileDialog>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -30,7 +31,6 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <QPushButton>
-#include <QShortcut>
 #include <QStackedWidget>
 #include <QTextEdit>
 #include <QTime>
@@ -809,7 +809,7 @@ QWidget *ChatWindow::createMessageContentPage()
 
     m_messageEmojiButton = new QPushButton(QStringLiteral("表情"), composer);
     m_messageEmojiButton->setObjectName(QStringLiteral("composerGhostButton"));
-    m_messageFileButton = new QPushButton(QStringLiteral("文件"), composer);
+    m_messageFileButton = new QPushButton(QStringLiteral("图片"), composer);
     m_messageFileButton->setObjectName(QStringLiteral("composerGhostButton"));
     m_messageSendButton = new QPushButton(QStringLiteral("发送"), composer);
     m_messageSendButton->setObjectName(QStringLiteral("sendButton"));
@@ -827,6 +827,10 @@ QWidget *ChatWindow::createMessageContentPage()
             &QPushButton::clicked,
             this,
             &ChatWindow::handleSendMessage);
+    connect(m_messageFileButton,
+            &QPushButton::clicked,
+            this,
+            &ChatWindow::handleSendLocalImage);
 
     setConversationHeaderText(QStringLiteral("产品讨论组"),
                               QStringLiteral("3 人在线 · 需求评审中"));
@@ -1599,4 +1603,46 @@ void ChatWindow::handleSendMessage()
     }
 
     m_messageEditor->clear();
+}
+
+void ChatWindow::handleSendLocalImage()
+{
+    if (!m_conversationManager)
+    {
+        setConversationComposerHintText(
+            QStringLiteral("图片发送入口尚未初始化。"));
+        return;
+    }
+
+    if (m_currentConversationId.trimmed().isEmpty())
+    {
+        setConversationComposerHintText(
+            QStringLiteral("请先在左侧选择一个会话，再发送图片。"));
+        return;
+    }
+
+    const QString localPath = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("选择图片"),
+        QString(),
+        QStringLiteral("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"));
+    if (localPath.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    if (!m_conversationManager->appendLocalImageMessage(m_currentConversationId,
+                                                        localPath))
+    {
+        setConversationComposerHintText(
+            QStringLiteral("本地图片追加失败，请确认文件是可读取的图片。"));
+        return;
+    }
+
+    setConversationComposerHintText(
+        QStringLiteral("已在当前客户端追加一条本地图片消息，仅用于本地展示。"));
+    if (m_messageListView)
+    {
+        m_messageListView->scrollToBottom();
+    }
 }

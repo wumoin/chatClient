@@ -152,6 +152,15 @@ class ConversationManager : public QObject
                                 bool fromSelf);
 
     /**
+     * @brief 追加一条仅用于当前客户端演示态的本地图片消息。
+     * @param conversationId 会话唯一标识。
+     * @param localPath 本地图片路径。
+     * @return true 表示已成功写入本地模型；false 表示参数非法或图片不可读。
+     */
+    bool appendLocalImageMessage(const QString &conversationId,
+                                 const QString &localPath);
+
+    /**
      * @brief 通过 WS 发送一条文本消息。
      * @param conversationId 会话唯一标识。
      * @param text 待发送的文本内容。

@@ -250,6 +250,11 @@ class ChatWindow : public QWidget
     void handleSendMessage();
 
     /**
+     * @brief 选择本地图片并以仅本地展示的形式追加到当前会话。
+     */
+    void handleSendLocalImage();
+
+    /**
      * @brief 从好友详情页发起或复用一对一私聊会话。
      */
     void handleStartPrivateConversation();

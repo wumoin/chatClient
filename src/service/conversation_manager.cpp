@@ -8,9 +8,10 @@
 #include "ws/chat_ws_client.h"
 
 #include <QDateTime>
+#include <QImageReader>
 #include <QUuid>
-#include <memory>
 #include <functional>
+#include <memory>
 
 namespace chatclient::service {
 namespace {
@@ -471,6 +472,82 @@ void ConversationManager::appendLocalTextMessage(const QString &conversationId,
     if (state.lastLoadedMaxSeq <= 0) {
         state.lastLoadedMaxSeq = 1;
     }
+}
+
+bool ConversationManager::appendLocalImageMessage(const QString &conversationId,
+                                                  const QString &localPath)
+{
+    const QString trimmedConversationId = conversationId.trimmed();
+    const QString trimmedLocalPath = localPath.trimmed();
+    if (trimmedConversationId.isEmpty() || trimmedLocalPath.isEmpty()) {
+        return false;
+    }
+
+    QImageReader reader(trimmedLocalPath);
+    reader.setAutoTransform(true);
+    if (!reader.canRead()) {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "本地图片消息追加失败，图片文件不可读取，conversation_id="
+            << trimmedConversationId
+            << " local_path="
+            << trimmedLocalPath;
+        return false;
+    }
+
+    QSize imageSize = reader.size();
+    if (!imageSize.isValid()) {
+        const QImage image = reader.read();
+        if (image.isNull()) {
+            CHATCLIENT_LOG_WARN("conversation.manager")
+                << "本地图片消息追加失败，无法解析图片尺寸，conversation_id="
+                << trimmedConversationId
+                << " local_path="
+                << trimmedLocalPath
+                << " reader_error="
+                << reader.errorString();
+            return false;
+        }
+        imageSize = image.size();
+    }
+
+    const qint64 createdAtMs = QDateTime::currentMSecsSinceEpoch();
+    m_messageModelRegistry->addImageMessage(trimmedConversationId,
+                                            QStringLiteral("我"),
+                                            messageTimeText(createdAtMs),
+                                            true,
+                                            trimmedLocalPath,
+                                            QString(),
+                                            imageSize.width(),
+                                            imageSize.height(),
+                                            QString());
+
+    ConversationRuntimeState &state = ensureState(trimmedConversationId);
+    state.initialized = true;
+
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    if (m_conversationListModel->conversationById(trimmedConversationId,
+                                                  &conversation))
+    {
+        conversation.lastMessagePreview = QStringLiteral("[图片消息]");
+        conversation.hasLastMessageAtMs = true;
+        conversation.lastMessageAtMs = createdAtMs;
+        conversation.unreadCount = 0;
+        conversation.lastReadSeq =
+            qMax(conversation.lastReadSeq, conversation.lastMessageSeq);
+        m_conversationListModel->upsertConversation(conversation);
+        emit conversationListUpdated();
+    }
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "已追加本地图片消息，conversation_id="
+        << trimmedConversationId
+        << " local_path="
+        << trimmedLocalPath
+        << " width="
+        << imageSize.width()
+        << " height="
+        << imageSize.height();
+    return true;
 }
 
 bool ConversationManager::sendTextMessage(const QString &conversationId,

@@ -4,15 +4,19 @@
 
 #include <QAbstractItemModel>
 #include <QColor>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontMetrics>
+#include <QImageReader>
 #include <QListView>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
+#include <QPixmapCache>
 #include <QRect>
 #include <QTextLayout>
 #include <QTextOption>
 #include <QtMath>
-#include <iostream>
 
 namespace {
 // 行级留白：让消息之间有呼吸感，同时给滚动条预留视觉空间。
@@ -29,6 +33,10 @@ constexpr int kBubbleRadius = 12;
 constexpr int kBubbleMaxWidth = 520;
 constexpr int kBubbleMinWidth = 120;
 constexpr int kTextMinLayoutWidth = 40;
+constexpr int kImageMaxWidth = 280;
+constexpr int kImageMaxHeight = 220;
+constexpr int kPlaceholderImageWidth = 220;
+constexpr int kPlaceholderImageHeight = 150;
 
 int maxBubbleWidthForViewportInternal(int viewportWidth)
 {
@@ -69,8 +77,103 @@ QString fallbackText(const QModelIndex &index)
     if (text.isEmpty()) {
         text = index.data(Qt::DisplayRole).toString();
     }
-    //std::cout << text.toStdString() << '\n';
     return text;
+}
+
+MessageType messageTypeFromIndex(const QModelIndex &index)
+{
+    return static_cast<MessageType>(
+        index.data(MessageModel::MessageTypeRole).toInt());
+}
+
+QString messageBodyText(const QModelIndex &index)
+{
+    const MessageType messageType = messageTypeFromIndex(index);
+    if (messageType == MessageType::Image ||
+        messageType == MessageType::File)
+    {
+        return index.data(MessageModel::TextRole).toString();
+    }
+
+    return fallbackText(index);
+}
+
+QSize resolveImageSourceSize(const QModelIndex &index)
+{
+    const int width = index.data(MessageModel::ImageWidthRole).toInt();
+    const int height = index.data(MessageModel::ImageHeightRole).toInt();
+    if (width > 0 && height > 0) {
+        return QSize(width, height);
+    }
+
+    const QString localPath =
+        index.data(MessageModel::ImageLocalPathRole).toString().trimmed();
+    if (localPath.isEmpty()) {
+        return QSize(kPlaceholderImageWidth, kPlaceholderImageHeight);
+    }
+
+    QImageReader reader(localPath);
+    reader.setAutoTransform(true);
+    const QSize size = reader.size();
+    if (size.isValid()) {
+        return size;
+    }
+
+    return QSize(kPlaceholderImageWidth, kPlaceholderImageHeight);
+}
+
+QSize scaledImageSize(const QSize &sourceSize, int maxWidth)
+{
+    const QSize safeSource = sourceSize.isValid()
+                                 ? sourceSize
+                                 : QSize(kPlaceholderImageWidth,
+                                         kPlaceholderImageHeight);
+    QSize target = safeSource;
+    target.scale(qMin(maxWidth, kImageMaxWidth),
+                 kImageMaxHeight,
+                 Qt::KeepAspectRatio);
+    if (!target.isValid() || target.width() <= 0 || target.height() <= 0) {
+        return QSize(kPlaceholderImageWidth, kPlaceholderImageHeight);
+    }
+    return target;
+}
+
+QString imageCacheKey(const QString &localPath, const QSize &targetSize)
+{
+    return QStringLiteral("message_image:%1:%2x%3")
+        .arg(localPath, QString::number(targetSize.width()),
+             QString::number(targetSize.height()));
+}
+
+QPixmap loadImagePixmap(const QString &localPath, const QSize &targetSize)
+{
+    if (localPath.trimmed().isEmpty() || !targetSize.isValid() ||
+        !QFileInfo::exists(localPath))
+    {
+        return QPixmap();
+    }
+
+    const QString cacheKey = imageCacheKey(localPath, targetSize);
+    QPixmap cachedPixmap;
+    if (QPixmapCache::find(cacheKey, &cachedPixmap)) {
+        return cachedPixmap;
+    }
+
+    QImageReader reader(localPath);
+    reader.setAutoTransform(true);
+    const QImage image = reader.read();
+    if (image.isNull()) {
+        return QPixmap();
+    }
+
+    const QPixmap pixmap = QPixmap::fromImage(
+        image.scaled(targetSize,
+                     Qt::KeepAspectRatioByExpanding,
+                     Qt::SmoothTransformation));
+    if (!pixmap.isNull()) {
+        QPixmapCache::insert(cacheKey, pixmap);
+    }
+    return pixmap;
 }
 
 QString textForLayout(const QString &text)
@@ -119,11 +222,14 @@ struct BubbleLayout {
     QRect bubbleRect;
     QRect authorRect;
     QRect messageRect;
+    QRect imageRect;
     QRect timeRect;
     int edgeAlign = Qt::AlignLeft;
+    bool hasImage = false;
 };
 
 BubbleLayout buildBubbleLayout(const QStyleOptionViewItem &option,
+                               const QModelIndex &index,
                                const QString &author,
                                const QString &text,
                                const QString &timeText,
@@ -140,6 +246,81 @@ BubbleLayout buildBubbleLayout(const QStyleOptionViewItem &option,
                                                kRowVerticalMargin,
                                                -kRowHorizontalMargin,
                                                -kRowVerticalMargin);
+    const MessageType messageType = messageTypeFromIndex(index);
+    if (messageType == MessageType::Image) {
+        const int maxBubbleWidth =
+            maxBubbleWidthForViewportInternal(rowRect.width());
+        const int maxContentWidth =
+            qMax(kTextMinLayoutWidth, maxBubbleWidth - (kBubblePaddingX * 2));
+        const QSize imageSize =
+            scaledImageSize(resolveImageSourceSize(index), maxContentWidth);
+        const int captionWidth =
+            qMax(kTextMinLayoutWidth, maxBubbleWidth - (kBubblePaddingX * 2));
+        const QRect captionBounds =
+            text.trimmed().isEmpty()
+                ? QRect()
+                : messageMetrics.boundingRect(
+                      QRect(0, 0, captionWidth, 20000),
+                      Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
+                      text);
+        const int captionHeight = text.trimmed().isEmpty()
+                                      ? 0
+                                      : qCeil(layoutTextHeight(text,
+                                                               mFont,
+                                                               captionWidth));
+        const int contentWidth = qMax(authorMetrics.horizontalAdvance(author),
+                                      qMax(imageSize.width(),
+                                           qMax(captionBounds.width(),
+                                                timeMetrics.horizontalAdvance(
+                                                    timeText))));
+        const int bubbleWidth = qMin(maxBubbleWidth,
+                                     qMax(kBubbleMinWidth,
+                                          contentWidth +
+                                              (kBubblePaddingX * 2)));
+        const int bubbleHeight =
+            (kBubblePaddingY * 2) + authorMetrics.height() + kBubbleSpacing +
+            imageSize.height() +
+            (captionHeight > 0 ? kBubbleSpacing + captionHeight : 0) +
+            kBubbleSpacing + timeMetrics.height();
+
+        const int bubbleLeft =
+            fromSelf ? (rowRect.right() - bubbleWidth + 1) : rowRect.left();
+        const QRect bubbleRect(bubbleLeft, rowRect.top(), bubbleWidth,
+                               bubbleHeight);
+        const int contentLeft = bubbleRect.left() + kBubblePaddingX;
+        const int contentTop = bubbleRect.top() + kBubblePaddingY;
+        const int edgeAlign = fromSelf ? Qt::AlignRight : Qt::AlignLeft;
+        const QRect authorRect(contentLeft, contentTop,
+                               bubbleWidth - (kBubblePaddingX * 2),
+                               authorMetrics.height());
+        const QRect imageRect(contentLeft,
+                              authorRect.bottom() + 1 + kBubbleSpacing,
+                              imageSize.width(),
+                              imageSize.height());
+        const QRect captionRect(
+            contentLeft,
+            imageRect.bottom() + 1 +
+                (captionHeight > 0 ? kBubbleSpacing : 0),
+            bubbleWidth - (kBubblePaddingX * 2),
+            captionHeight);
+        const QRect timeRect(
+            contentLeft,
+            (captionHeight > 0 ? captionRect.bottom() : imageRect.bottom()) +
+                1 + kBubbleSpacing,
+            bubbleWidth - (kBubblePaddingX * 2),
+            timeMetrics.height());
+
+        BubbleLayout layout;
+        layout.bubbleRect = bubbleRect;
+        layout.authorRect = authorRect;
+        layout.imageRect = imageRect;
+        layout.messageRect = captionRect;
+        layout.timeRect = timeRect;
+        layout.edgeAlign = edgeAlign;
+        layout.hasImage = true;
+        return layout;
+    }
+
     // 先按“最大文本宽度”估算内容宽，再夹到 [min,max] 形成最终气泡宽。
     // 这样既可避免超长单行影响可读性，也能避免短消息过窄造成视觉抖动。
     const int maxBubbleWidth = maxBubbleWidthForViewportInternal(rowRect.width());
@@ -326,10 +507,14 @@ int MessageDelegate::textPositionAt(const QStyleOptionViewItem &option,
     }
 
     const QString author = index.data(MessageModel::AuthorRole).toString();
-    const QString text = fallbackText(index);
+    const QString text = messageBodyText(index);
     const QString timeText = index.data(MessageModel::TimeRole).toString();
     const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
-    const BubbleLayout layout = buildBubbleLayout(option, author, text, timeText, fromSelf);
+    const BubbleLayout layout =
+        buildBubbleLayout(option, index, author, text, timeText, fromSelf);
+    if (layout.messageRect.height() <= 0 || text.isEmpty()) {
+        return -1;
+    }
     return cursorAtTextPosition(layout.messageRect,
                                 text,
                                 messageFont(option.font),
@@ -344,7 +529,7 @@ void MessageDelegate::setTextSelection(const QModelIndex &index, int anchor, int
         return;
     }
 
-    const QString text = fallbackText(index);
+    const QString text = messageBodyText(index);
     const int maxCursor = text.size();
     // 外部传入的 anchor/cursor 允许越界，这里统一裁剪到合法范围，避免后续取子串崩溃。
     m_selectionIndex = QPersistentModelIndex(index);
@@ -417,10 +602,14 @@ QSize MessageDelegate::sizeHint(const QStyleOptionViewItem &option, const QModel
     const QString text = fallbackText(index);
     const QString timeText = index.data(MessageModel::TimeRole).toString();
     const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
-
     QStyleOptionViewItem optionForLayout(option);
     optionForLayout.rect.setWidth(viewportWidth);
-    const BubbleLayout layout = buildBubbleLayout(optionForLayout, author, text, timeText, fromSelf);
+    const BubbleLayout layout = buildBubbleLayout(optionForLayout,
+                                                  index,
+                                                  author,
+                                                  text,
+                                                  timeText,
+                                                  fromSelf);
     return QSize(viewportWidth, layout.bubbleRect.height() + (kRowVerticalMargin * 2));
 }
 
@@ -428,14 +617,18 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 {
     // 1) 拉取渲染所需数据。
     const QString author = index.data(MessageModel::AuthorRole).toString();
-    const QString text = fallbackText(index);
+    const QString text = messageBodyText(index);
     const QString timeText = index.data(MessageModel::TimeRole).toString();
     const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
+    const MessageType messageType = messageTypeFromIndex(index);
+    const QString imageLocalPath =
+        index.data(MessageModel::ImageLocalPathRole).toString().trimmed();
 
     const QFont aFont = authorFont(option.font);
     const QFont mFont = messageFont(option.font);
     const QFont tFont = timeFont(option.font);
-    const BubbleLayout layout = buildBubbleLayout(option, author, text, timeText, fromSelf);
+    const BubbleLayout layout =
+        buildBubbleLayout(option, index, author, text, timeText, fromSelf);
 
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
@@ -452,17 +645,66 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     painter->setPen(QColor(QStringLiteral("#3d4f6b")));
     painter->drawText(layout.authorRect, layout.edgeAlign | Qt::AlignVCenter, author);
 
-    int selectStart = 0;
-    int selectEnd = 0;
-    if (hasTextSelectionOnIndex(index)
-        && normalizedSelection(m_selectionAnchor, m_selectionCursor, &selectStart, &selectEnd)) {
-        // 先绘制选区背景再绘制正文，保证文字始终在高亮层上方清晰可读。
-        drawTextSelectionBackground(painter, layout.messageRect, text, mFont, selectStart, selectEnd);
-    }
+    if (layout.hasImage)
+    {
+        const QPixmap imagePixmap =
+            loadImagePixmap(imageLocalPath, layout.imageRect.size());
+        QPainterPath imagePath;
+        imagePath.addRoundedRect(layout.imageRect, 10, 10);
+        painter->save();
+        painter->setClipPath(imagePath);
+        if (!imagePixmap.isNull())
+        {
+            painter->drawPixmap(layout.imageRect, imagePixmap);
+        }
+        else
+        {
+            painter->fillRect(layout.imageRect,
+                              QColor(QStringLiteral("#edf3fb")));
+            painter->setPen(QColor(QStringLiteral("#8ea0bb")));
+            painter->drawText(layout.imageRect,
+                              Qt::AlignCenter,
+                              QStringLiteral("图片"));
+        }
+        painter->restore();
 
-    painter->setFont(mFont);
-    painter->setPen(QColor(QStringLiteral("#162740")));
-    painter->drawText(layout.messageRect, Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop, text);
+        if (!layout.messageRect.isEmpty() && !text.isEmpty())
+        {
+            int selectStart = 0;
+            int selectEnd = 0;
+            if (hasTextSelectionOnIndex(index) &&
+                normalizedSelection(m_selectionAnchor,
+                                    m_selectionCursor,
+                                    &selectStart,
+                                    &selectEnd))
+            {
+                drawTextSelectionBackground(
+                    painter, layout.messageRect, text, mFont, selectStart,
+                    selectEnd);
+            }
+
+            painter->setFont(mFont);
+            painter->setPen(QColor(QStringLiteral("#162740")));
+            painter->drawText(layout.messageRect,
+                              Qt::TextWordWrap | Qt::AlignLeft |
+                                  Qt::AlignTop,
+                              text);
+        }
+    }
+    else
+    {
+        int selectStart = 0;
+        int selectEnd = 0;
+        if (hasTextSelectionOnIndex(index)
+            && normalizedSelection(m_selectionAnchor, m_selectionCursor, &selectStart, &selectEnd)) {
+            // 先绘制选区背景再绘制正文，保证文字始终在高亮层上方清晰可读。
+            drawTextSelectionBackground(painter, layout.messageRect, text, mFont, selectStart, selectEnd);
+        }
+
+        painter->setFont(mFont);
+        painter->setPen(QColor(QStringLiteral("#162740")));
+        painter->drawText(layout.messageRect, Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop, text);
+    }
 
     painter->setFont(tFont);
     painter->setPen(QColor(QStringLiteral("#7d8ea8")));
