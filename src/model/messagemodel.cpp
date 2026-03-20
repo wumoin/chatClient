@@ -168,3 +168,21 @@ void MessageModel::addFileMessage(const QString &author,
     item.file.sizeBytes = sizeBytes;
     addMessageItem(item);
 }
+
+void MessageModel::setMessageItems(const QVector<MessageItem> &items)
+{
+    beginResetModel();
+    m_messages = items;
+    endResetModel();
+}
+
+void MessageModel::clear()
+{
+    if (m_messages.isEmpty()) {
+        return;
+    }
+
+    beginResetModel();
+    m_messages.clear();
+    endResetModel();
+}

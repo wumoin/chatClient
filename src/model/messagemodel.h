@@ -162,6 +162,15 @@ public:
                         const QString &remoteUrl = QString(),
                         qint64 sizeBytes = -1,
                         const QString &caption = QString());
+    /**
+     * @brief 用新的消息列表整体替换当前模型内容。
+     * @param items 新的完整消息集合。
+     */
+    void setMessageItems(const QVector<MessageItem> &items);
+    /**
+     * @brief 清空当前模型中的全部消息。
+     */
+    void clear();
 
 private:
     QVector<MessageItem> m_messages;

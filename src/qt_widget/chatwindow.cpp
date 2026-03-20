@@ -1,23 +1,24 @@
 #include "chatwindow.h"
 
-#include "api/conversation_api_client.h"
 #include "api/user_api_client.h"
 #include "config/appconfig.h"
 #include "dto/conversation_dto.h"
 #include "log/app_logger.h"
+#include "model/conversationlistmodel.h"
 #include "model/messagemodel.h"
-#include "model/messagemodelregistry.h"
 #include "qt_widget/addfrienddialog.h"
 #include "service/auth_service.h"
+#include "service/conversation_manager.h"
 #include "service/friend_service.h"
 #include "view/messagelistview.h"
-#include "ws/chat_ws_client.h"
 
 #include <QAbstractItemView>
 #include <QCloseEvent>
+#include <QColor>
 #include <QFile>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QImage>
 #include <QKeySequence>
 #include <QLabel>
@@ -45,6 +46,9 @@ constexpr int kFriendMetaRole = Qt::UserRole + 5;
 constexpr int kFriendHintRole = Qt::UserRole + 6;
 constexpr int kFriendUserIdRole = Qt::UserRole + 7;
 constexpr int kFriendAvatarStorageKeyRole = Qt::UserRole + 8;
+constexpr int kConversationPeerUserIdRole = Qt::UserRole + 9;
+constexpr int kConversationAvatarStorageKeyRole = Qt::UserRole + 10;
+const auto kEmptyConversationId = "__empty_conversation__";
 
 QString localizeCreateConversationError(
     const chatclient::dto::conversation::ApiErrorDto &error)
@@ -123,15 +127,48 @@ QPixmap createRoundedAvatarPixmap(const QImage &image, const QSize &size)
     return roundedPixmap;
 }
 
+QString avatarText(const QString &displayName)
+{
+    const QString trimmedName = displayName.trimmed();
+    if (trimmedName.isEmpty()) {
+        return QStringLiteral("会话");
+    }
+
+    return trimmedName.size() <= 2 ? trimmedName : trimmedName.left(2);
+}
+
+QPixmap createTextAvatarPixmap(const QString &displayName, const QSize &size)
+{
+    if (!size.isValid()) {
+        return QPixmap();
+    }
+
+    QPixmap pixmap(size);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0xD9, 0xE7, 0xFF));
+    painter.drawEllipse(pixmap.rect());
+
+    QFont font = painter.font();
+    font.setBold(true);
+    font.setPixelSize(qMax(14, size.height() / 3));
+    painter.setFont(font);
+    painter.setPen(QColor(0x21, 0x4A, 0x7A));
+    painter.drawText(pixmap.rect(), Qt::AlignCenter, avatarText(displayName));
+    return pixmap;
+}
+
 }  // namespace
 
 ChatWindow::ChatWindow(QWidget *parent)
     : QWidget(parent)
 {
     const auto &config = chatclient::config::AppConfig::instance();
-    m_conversationApiClient = new chatclient::api::ConversationApiClient(this);
+    m_conversationManager = new chatclient::service::ConversationManager(this);
     m_userApiClient = new chatclient::api::UserApiClient(this);
-    m_chatWsClient = new chatclient::ws::ChatWsClient(this);
 
     // 聊天主界面当前改成三段式结构：
     // 1) 左侧导航栏负责“消息 / 好友”模式切换；
@@ -156,12 +193,12 @@ ChatWindow::ChatWindow(QWidget *parent)
 
     setStyleSheet(loadChatStyleSheet());
 
-    connect(m_chatWsClient,
-            &chatclient::ws::ChatWsClient::statusChanged,
+    connect(m_conversationManager,
+            &chatclient::service::ConversationManager::realtimeStatusChanged,
             this,
             &ChatWindow::updateRealtimeStatus);
-    connect(m_chatWsClient,
-            &chatclient::ws::ChatWsClient::authenticated,
+    connect(m_conversationManager,
+            &chatclient::service::ConversationManager::realtimeAuthenticated,
             this,
             [this](const QString &userId, const QString &deviceSessionId) {
                 CHATCLIENT_LOG_INFO("chat.window")
@@ -170,8 +207,8 @@ ChatWindow::ChatWindow(QWidget *parent)
                     << " device_session_id="
                     << deviceSessionId;
             });
-    connect(m_chatWsClient,
-            &chatclient::ws::ChatWsClient::authenticationFailed,
+    connect(m_conversationManager,
+            &chatclient::service::ConversationManager::realtimeAuthenticationFailed,
             this,
             [this](const QString &message) {
                 CHATCLIENT_LOG_WARN("chat.window")
@@ -183,32 +220,18 @@ ChatWindow::ChatWindow(QWidget *parent)
                     m_friendDetailHintLabel->setText(message);
                 }
             });
-    // 示例消息数据仍然在本地准备，方便当前继续联调 UI。
-    m_messageModelRegistry->addTextMessage(QStringLiteral("product_discussion"),
-                                           QStringLiteral("李华"),
-                                           QStringLiteral("首页改版需求已经更新到共享文档。"),
-                                           QStringLiteral("09:12"),
-                                           false);
-    m_messageModelRegistry->addTextMessage(QStringLiteral("product_discussion"),
-                                           QStringLiteral("我"),
-                                           QStringLiteral("收到，我今天把聊天页骨架一起整理出来。"),
-                                           QStringLiteral("09:14"),
-                                           true);
-    m_messageModelRegistry->addTextMessage(QStringLiteral("backend_sync"),
-                                           QStringLiteral("后端同学"),
-                                           QStringLiteral("登录、登出接口都已经通了，可以开始接客户端。"),
-                                           QStringLiteral("10:06"),
-                                           false);
-    m_messageModelRegistry->addTextMessage(QStringLiteral("backend_sync"),
-                                           QStringLiteral("我"),
-                                           QStringLiteral("好的，今天先把消息 / 好友两栏骨架切出来。"),
-                                           QStringLiteral("10:08"),
-                                           true);
-    m_messageModelRegistry->addTextMessage(QStringLiteral("design_review"),
-                                           QStringLiteral("设计师"),
-                                           QStringLiteral("导航栏方案建议固定成消息和好友两个主入口。"),
-                                           QStringLiteral("11:20"),
-                                           false);
+    connect(m_conversationManager,
+            &chatclient::service::ConversationManager::conversationBootstrapStarted,
+            this,
+            [this]() { showSessionPlaceholder(QStringLiteral("正在同步会话列表...")); });
+    connect(m_conversationManager,
+            &chatclient::service::ConversationManager::conversationListUpdated,
+            this,
+            [this]() { updateSessionListFromManager(true); });
+    connect(m_conversationManager,
+            &chatclient::service::ConversationManager::conversationBootstrapFailed,
+            this,
+            [this](const QString &message) { showSessionPlaceholder(message); });
 
     switchSection(SidebarSection::kMessages);
     handleSessionSelectionChanged();
@@ -235,6 +258,10 @@ void ChatWindow::setCurrentUserProfile(const QString &displayName,
     }
 
     connectRealtimeChannel();
+    if (m_conversationManager)
+    {
+        m_conversationManager->initializeConversationDataIfNeeded();
+    }
 
     if (!m_userApiClient || m_currentProfileUserId.isEmpty() ||
         m_currentProfileAvatarStorageKey.isEmpty())
@@ -306,6 +333,10 @@ void ChatWindow::setSessionActionSubmitting(const bool submitting,
 void ChatWindow::setAuthService(chatclient::service::AuthService *authService)
 {
     m_authService = authService;
+    if (m_conversationManager)
+    {
+        m_conversationManager->setAuthService(m_authService);
+    }
 
     if (m_friendService)
     {
@@ -315,22 +346,12 @@ void ChatWindow::setAuthService(chatclient::service::AuthService *authService)
 
     if (!m_authService)
     {
-        if (m_chatWsClient)
+        if (m_conversationManager)
         {
-            m_chatWsClient->disconnectFromServer();
+            m_conversationManager->disconnectRealtimeChannel();
         }
         return;
     }
-
-    connect(m_authService,
-            &chatclient::service::AuthService::logoutSucceeded,
-            this,
-            [this]() {
-                if (m_chatWsClient)
-                {
-                    m_chatWsClient->disconnectFromServer();
-                }
-            });
 
     m_friendService = new chatclient::service::FriendService(m_authService, this);
     connect(m_friendService,
@@ -568,35 +589,8 @@ QWidget *ChatWindow::createMessagesPage()
     m_sessionList = new QListWidget(page);
     m_sessionList->setObjectName(QStringLiteral("entityList"));
     m_sessionList->setSelectionMode(QAbstractItemView::SingleSelection);
-
-    auto *productDiscussion = createRichListItem(
-        QStringLiteral("产品讨论组"),
-        QStringLiteral("首页需求已更新"),
-        m_sessionList);
-    productDiscussion->setData(kConversationIdRole, QStringLiteral("product_discussion"));
-    productDiscussion->setData(kConversationTitleRole, QStringLiteral("产品讨论组"));
-    productDiscussion->setData(kConversationMetaRole,
-                               QStringLiteral("3 人在线 · 需求评审中"));
-
-    auto *backendSync = createRichListItem(
-        QStringLiteral("后端联调"),
-        QStringLiteral("登录和登出接口都已经打通"),
-        m_sessionList);
-    backendSync->setData(kConversationIdRole, QStringLiteral("backend_sync"));
-    backendSync->setData(kConversationTitleRole, QStringLiteral("后端联调"));
-    backendSync->setData(kConversationMetaRole,
-                         QStringLiteral("接口联调 · 设备会话验证"));
-
-    auto *designReview = createRichListItem(
-        QStringLiteral("设计评审"),
-        QStringLiteral("左导航和中间栏切换方案待确认"),
-        m_sessionList);
-    designReview->setData(kConversationIdRole, QStringLiteral("design_review"));
-    designReview->setData(kConversationTitleRole, QStringLiteral("设计评审"));
-    designReview->setData(kConversationMetaRole,
-                          QStringLiteral("视觉方案 · 等待反馈"));
-
-    m_sessionList->setCurrentRow(0);
+    m_sessionList->setIconSize(QSize(40, 40));
+    showSessionPlaceholder(QStringLiteral("正在准备会话列表..."));
     connect(m_sessionList,
             &QListWidget::currentItemChanged,
             this,
@@ -699,9 +693,9 @@ QWidget *ChatWindow::createMessageContentPage()
 
     m_messageListView = new MessageListView(panel);
     m_messageListView->setObjectName(QStringLiteral("messageListView"));
-    m_messageModelRegistry = new MessageModelRegistry(this);
     m_messageListView->setMessageModel(
-        m_messageModelRegistry->ensureModel(QStringLiteral("product_discussion")));
+        m_conversationManager->ensureMessageModel(
+            QString::fromLatin1(kEmptyConversationId)));
 
     auto *composer = new QFrame(panel);
     composer->setObjectName(QStringLiteral("composerPanel"));
@@ -867,6 +861,7 @@ void ChatWindow::switchSection(const SidebarSection section)
     }
 
     if (showMessages) {
+        updateSessionListFromManager(true);
         handleSessionSelectionChanged();
     } else {
         refreshFriendList(true);
@@ -896,7 +891,7 @@ void ChatWindow::handleStartPrivateConversation()
         return;
     }
 
-    if (!m_conversationApiClient)
+    if (!m_conversationManager)
     {
         m_friendDetailHintLabel->setText(
             QStringLiteral("会话接口客户端尚未初始化。"));
@@ -906,8 +901,6 @@ void ChatWindow::handleStartPrivateConversation()
     const QString peerName =
         m_friendDetailTitleLabel ? m_friendDetailTitleLabel->text().trimmed()
                                  : QString();
-    chatclient::dto::conversation::CreatePrivateConversationRequestDto request;
-    request.peerUserId = peerUserId;
 
     m_startChatButton->setEnabled(false);
     m_startChatButton->setText(QStringLiteral("创建中..."));
@@ -915,11 +908,8 @@ void ChatWindow::handleStartPrivateConversation()
         QStringLiteral("正在为你和 %1 创建或复用私聊会话。")
             .arg(peerName.isEmpty() ? QStringLiteral("该好友") : peerName));
 
-    const QString accessToken =
-        m_authService->currentSession().accessToken.trimmed();
-    m_conversationApiClient->createPrivateConversation(
-        accessToken,
-        request,
+    m_conversationManager->createPrivateConversation(
+        peerUserId,
         [this, peerName](
             const chatclient::dto::conversation::
                 CreatePrivateConversationResponseDto &response) {
@@ -976,22 +966,18 @@ void ChatWindow::handleStartPrivateConversation()
 
 void ChatWindow::connectRealtimeChannel()
 {
-    if (!m_chatWsClient)
+    if (!m_conversationManager)
     {
         return;
     }
 
     if (!m_authService || !m_authService->hasActiveSession())
     {
-        m_chatWsClient->disconnectFromServer();
+        m_conversationManager->disconnectRealtimeChannel();
         return;
     }
 
-    const auto &session = m_authService->currentSession();
-    m_chatWsClient->setSession(session.accessToken,
-                               m_authService->currentDeviceId(),
-                               session.deviceSessionId);
-    m_chatWsClient->connectToServer();
+    m_conversationManager->connectRealtimeChannel();
 }
 
 void ChatWindow::updateRealtimeStatus(const QString &statusText)
@@ -1002,6 +988,165 @@ void ChatWindow::updateRealtimeStatus(const QString &statusText)
     }
 }
 
+void ChatWindow::showSessionPlaceholder(const QString &message)
+{
+    if (!m_sessionList) {
+        return;
+    }
+
+    m_sessionList->clear();
+    auto *item = new QListWidgetItem(message, m_sessionList);
+    item->setFlags(Qt::NoItemFlags);
+
+    m_currentConversationId.clear();
+    if (m_conversationTitleLabel) {
+        m_conversationTitleLabel->setText(QStringLiteral("消息"));
+    }
+    if (m_conversationMetaLabel) {
+        m_conversationMetaLabel->setText(QStringLiteral("等待会话同步"));
+    }
+    if (m_messageListView && m_conversationManager) {
+        m_messageListView->setMessageModel(
+            m_conversationManager->ensureMessageModel(
+                QString::fromLatin1(kEmptyConversationId)));
+    }
+}
+
+void ChatWindow::updateSessionListFromManager(bool keepSelection)
+{
+    if (!m_sessionList || !m_conversationManager) {
+        return;
+    }
+
+    const QString previousConversationId =
+        keepSelection ? m_currentConversationId : QString();
+    auto *conversationModel = m_conversationManager->conversationListModel();
+    if (!conversationModel || conversationModel->rowCount() <= 0) {
+        showSessionPlaceholder(QStringLiteral("当前还没有会话"));
+        return;
+    }
+
+    m_sessionList->clear();
+
+    int targetRow = -1;
+    for (int row = 0; row < conversationModel->rowCount(); ++row)
+    {
+        const QModelIndex index = conversationModel->index(row, 0);
+        const QString conversationId =
+            index.data(
+                     chatclient::model::ConversationListModel::ConversationIdRole)
+                .toString();
+        const QString title =
+            index.data(chatclient::model::ConversationListModel::TitleRole)
+                .toString();
+        const QString peerUserId =
+            index.data(
+                     chatclient::model::ConversationListModel::PeerUserIdRole)
+                .toString();
+        const QString avatarStorageKey =
+            index.data(
+                     chatclient::model::ConversationListModel::AvatarUrlRole)
+                .toString();
+        const QString preview =
+            index.data(
+                     chatclient::model::ConversationListModel::LastMessagePreviewRole)
+                .toString();
+        const qint64 unreadCount =
+            index.data(
+                     chatclient::model::ConversationListModel::UnreadCountRole)
+                .toLongLong();
+
+        const QString subtitle =
+            preview.trimmed().isEmpty()
+                ? QStringLiteral("暂无历史消息")
+                : preview.trimmed();
+        auto *item = createRichListItem(title, subtitle, m_sessionList);
+        item->setData(kConversationIdRole, conversationId);
+        item->setData(kConversationTitleRole, title);
+        item->setData(kConversationPeerUserIdRole, peerUserId);
+        item->setData(kConversationAvatarStorageKeyRole, avatarStorageKey);
+        item->setData(
+            kConversationMetaRole,
+            unreadCount > 0
+                ? QStringLiteral("%1 条未读").arg(unreadCount)
+                : QStringLiteral("历史消息已同步"));
+        item->setIcon(QIcon(createTextAvatarPixmap(title, QSize(40, 40))));
+
+        if (m_userApiClient && !peerUserId.isEmpty() &&
+            !avatarStorageKey.trimmed().isEmpty())
+        {
+            m_userApiClient->downloadUserAvatar(
+                peerUserId,
+                [this, conversationId](const QByteArray &data) {
+                    if (!m_sessionList) {
+                        return;
+                    }
+
+                    QImage image;
+                    if (!image.loadFromData(data))
+                    {
+                        CHATCLIENT_LOG_WARN("chat.window")
+                            << "解析会话头像图片失败，conversation_id="
+                            << conversationId;
+                        return;
+                    }
+
+                    const QPixmap avatarPixmap =
+                        createRoundedAvatarPixmap(image, QSize(40, 40));
+                    if (avatarPixmap.isNull()) {
+                        return;
+                    }
+
+                    for (int itemIndex = 0;
+                         itemIndex < m_sessionList->count();
+                         ++itemIndex)
+                    {
+                        QListWidgetItem *currentItem =
+                            m_sessionList->item(itemIndex);
+                        if (!currentItem) {
+                            continue;
+                        }
+
+                        if (currentItem->data(kConversationIdRole).toString() !=
+                            conversationId)
+                        {
+                            continue;
+                        }
+
+                        currentItem->setIcon(QIcon(avatarPixmap));
+                        return;
+                    }
+                },
+                [conversationId](const chatclient::dto::user::ApiErrorDto &error) {
+                    CHATCLIENT_LOG_WARN("chat.window")
+                        << "下载会话头像失败，conversation_id="
+                        << conversationId
+                        << " request_id="
+                        << error.requestId
+                        << " http_status="
+                        << error.httpStatus
+                        << " error_code="
+                        << error.errorCode
+                        << " message="
+                        << error.message;
+                });
+        }
+
+        if (!previousConversationId.isEmpty() &&
+            previousConversationId == conversationId)
+        {
+            targetRow = row;
+        }
+    }
+
+    if (targetRow < 0) {
+        targetRow = 0;
+    }
+
+    m_sessionList->setCurrentRow(targetRow);
+    handleSessionSelectionChanged();
+}
+
 void ChatWindow::handleSessionSelectionChanged()
 {
     if (!m_sessionList) {
@@ -1010,6 +1155,18 @@ void ChatWindow::handleSessionSelectionChanged()
 
     auto *item = m_sessionList->currentItem();
     if (item == nullptr) {
+        m_currentConversationId.clear();
+        if (m_conversationTitleLabel) {
+            m_conversationTitleLabel->setText(QStringLiteral("消息"));
+        }
+        if (m_conversationMetaLabel) {
+            m_conversationMetaLabel->setText(QStringLiteral("请选择一个会话"));
+        }
+        if (m_messageListView && m_conversationManager) {
+            m_messageListView->setMessageModel(
+                m_conversationManager->ensureMessageModel(
+                    QString::fromLatin1(kEmptyConversationId)));
+        }
         return;
     }
 
@@ -1027,9 +1184,9 @@ void ChatWindow::handleSessionSelectionChanged()
             item->data(kConversationMetaRole).toString());
     }
 
-    if (m_messageModelRegistry && m_messageListView) {
+    if (m_conversationManager && m_messageListView) {
         m_messageListView->setMessageModel(
-            m_messageModelRegistry->ensureModel(m_currentConversationId));
+            m_conversationManager->ensureMessageModel(m_currentConversationId));
         m_messageListView->scrollToBottom();
     }
 }
@@ -1241,15 +1398,16 @@ void ChatWindow::appendMessage(const QString &author,
                                const QString &text,
                                const bool fromSelf)
 {
-    if (!m_messageListView || !m_messageModelRegistry || m_currentConversationId.isEmpty()) {
+    if (!m_messageListView || !m_conversationManager || m_currentConversationId.isEmpty()) {
         return;
     }
 
-    m_messageModelRegistry->addTextMessage(m_currentConversationId,
-                                           author,
-                                           text,
-                                           QTime::currentTime().toString(QStringLiteral("HH:mm")),
-                                           fromSelf);
+    m_conversationManager->appendLocalTextMessage(
+        m_currentConversationId,
+        author,
+        text,
+        QTime::currentTime().toString(QStringLiteral("HH:mm")),
+        fromSelf);
     m_messageListView->scrollToBottom();
 }
 

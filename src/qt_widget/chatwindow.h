@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dto/conversation_dto.h"
 #include "dto/friend_dto.h"
 
 #include <QString>
@@ -14,19 +15,14 @@ class QPushButton;
 class QStackedWidget;
 class QTextEdit;
 class MessageListView;
-class MessageModelRegistry;
 
 namespace chatclient::api {
-class ConversationApiClient;
 class UserApiClient;
-}
-
-namespace chatclient::ws {
-class ChatWsClient;
 }
 
 namespace chatclient::service {
 class AuthService;
+class ConversationManager;
 class FriendService;
 }
 
@@ -168,6 +164,12 @@ class ChatWindow : public QWidget
     void refreshFriendList(bool keepSelection = true);
 
     /**
+     * @brief 将 ConversationListModel 当前快照同步到中间栏会话列表控件。
+     * @param keepSelection true 表示尽量保留当前选中会话；false 表示按默认规则重新选中。
+     */
+    void updateSessionListFromManager(bool keepSelection = true);
+
+    /**
      * @brief 用服务端返回的好友列表刷新中间栏。
      * @param friends 当前正式好友集合。
      * @param keepSelection true 表示尽量保留当前选中项。
@@ -229,6 +231,12 @@ class ChatWindow : public QWidget
      */
     void updateRealtimeStatus(const QString &statusText);
 
+    /**
+     * @brief 在中间栏展示“会话加载中 / 失败 / 为空”之类的占位文案。
+     * @param message 需要展示的说明文本。
+     */
+    void showSessionPlaceholder(const QString &message);
+
     SidebarSection m_currentSection{SidebarSection::kMessages};
 
     // 左侧导航栏：消息 / 好友两种主入口。
@@ -258,13 +266,11 @@ class ChatWindow : public QWidget
 
     // 消息页：仍然沿用现有 QListView + model + delegate 展示链路。
     MessageListView *m_messageListView = nullptr;
-    MessageModelRegistry *m_messageModelRegistry = nullptr;
     QString m_currentConversationId;
     QTextEdit *m_messageEditor = nullptr;
-    chatclient::api::ConversationApiClient *m_conversationApiClient = nullptr;
     chatclient::api::UserApiClient *m_userApiClient = nullptr;
-    chatclient::ws::ChatWsClient *m_chatWsClient = nullptr;
     chatclient::service::AuthService *m_authService = nullptr;
+    chatclient::service::ConversationManager *m_conversationManager = nullptr;
     chatclient::service::FriendService *m_friendService = nullptr;
 
     // 左下角：当前登录用户信息。

@@ -1,7 +1,5 @@
 #include "messagemodelregistry.h"
 
-#include "messagemodel.h"
-
 MessageModelRegistry::MessageModelRegistry(QObject *parent)
     : QObject(parent)
 {
@@ -35,6 +33,32 @@ bool MessageModelRegistry::hasModel(const QString &conversationId) const
 QStringList MessageModelRegistry::conversationIds() const
 {
     return m_models.keys();
+}
+
+void MessageModelRegistry::replaceMessageItems(
+    const QString &conversationId,
+    const QVector<MessageItem> &items)
+{
+    if (MessageModel *target = ensureModel(conversationId)) {
+        target->setMessageItems(items);
+    }
+}
+
+void MessageModelRegistry::clearConversation(const QString &conversationId)
+{
+    if (MessageModel *target = model(conversationId)) {
+        target->clear();
+    }
+}
+
+void MessageModelRegistry::clearAll()
+{
+    const auto models = m_models.values();
+    for (MessageModel *model : models) {
+        if (model) {
+            model->clear();
+        }
+    }
 }
 
 void MessageModelRegistry::addTextMessage(const QString &conversationId,

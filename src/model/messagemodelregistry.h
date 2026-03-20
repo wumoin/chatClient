@@ -1,11 +1,11 @@
 #pragma once
 
+#include "messagemodel.h"
+
 #include <QObject>
 #include <QHash>
 #include <QString>
 #include <QStringList>
-
-class MessageModel;
 
 // 多会话消息模型注册表：
 // - 以 conversationId 为键管理多个 MessageModel；
@@ -45,6 +45,22 @@ public:
      * @return 会话 id 列表。
      */
     QStringList conversationIds() const;
+    /**
+     * @brief 用新的完整消息集合替换指定会话模型内容。
+     * @param conversationId 会话唯一标识。
+     * @param items 新的完整消息集合。
+     */
+    void replaceMessageItems(const QString &conversationId,
+                             const QVector<MessageItem> &items);
+    /**
+     * @brief 清空指定会话当前已加载的消息集合。
+     * @param conversationId 会话唯一标识。
+     */
+    void clearConversation(const QString &conversationId);
+    /**
+     * @brief 清空当前所有已注册会话模型中的消息集合。
+     */
+    void clearAll();
 
     /**
      * @brief 向指定会话追加文本消息。
