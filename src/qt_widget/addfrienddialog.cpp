@@ -1,6 +1,7 @@
 #include "addfrienddialog.h"
 
 #include "service/auth_service.h"
+#include "service/conversation_manager.h"
 #include "service/friend_service.h"
 
 #include <QAbstractItemView>
@@ -176,8 +177,10 @@ QWidget *createIncomingRequestWidget(
 }  // namespace
 
 AddFriendDialog::AddFriendDialog(chatclient::service::AuthService *authService,
+                                 chatclient::service::ConversationManager *conversationManager,
                                  QWidget *parent)
     : QDialog(parent),
+      m_conversationManager(conversationManager),
       m_friendService(new chatclient::service::FriendService(authService, this))
 {
     setModal(true);
@@ -546,6 +549,42 @@ AddFriendDialog::AddFriendDialog(chatclient::service::AuthService *authService,
                 updateIncomingRequests(m_incomingRequests);
                 updateActionState();
             });
+
+    if (m_conversationManager)
+    {
+        connect(m_conversationManager,
+                &chatclient::service::ConversationManager::realtimeNewEventReceived,
+                this,
+                [this](const QString &route, const QJsonObject &) {
+                    if (route == QStringLiteral("friend.request.new"))
+                    {
+                        if (!m_friendService->isLoadingIncomingRequests())
+                        {
+                            loadIncomingRequests();
+                        }
+
+                        setStatusMessage(
+                            QStringLiteral("收到新的好友申请，列表已自动刷新。"),
+                            QStringLiteral("info"));
+                        return;
+                    }
+
+                    if (route == QStringLiteral("friend.request.accepted") ||
+                        route == QStringLiteral("friend.request.rejected"))
+                    {
+                        if (!m_friendService->isLoadingOutgoingRequests())
+                        {
+                            loadOutgoingRequests();
+                        }
+
+                        setStatusMessage(
+                            route == QStringLiteral("friend.request.accepted")
+                                ? QStringLiteral("有一条好友申请已通过，记录已自动刷新。")
+                                : QStringLiteral("有一条好友申请被拒绝，记录已自动刷新。"),
+                            QStringLiteral("info"));
+                    }
+                });
+    }
 
     QTimer::singleShot(0, this, [this]() {
         loadOutgoingRequests();

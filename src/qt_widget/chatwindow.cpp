@@ -232,6 +232,26 @@ ChatWindow::ChatWindow(QWidget *parent)
             &chatclient::service::ConversationManager::conversationBootstrapFailed,
             this,
             [this](const QString &message) { showSessionPlaceholder(message); });
+    connect(m_conversationManager,
+            &chatclient::service::ConversationManager::realtimeNewEventReceived,
+            this,
+            [this](const QString &route, const QJsonObject &) {
+                if (route == QStringLiteral("friend.request.accepted"))
+                {
+                    CHATCLIENT_LOG_INFO("chat.window")
+                        << "收到好友申请通过实时事件，开始刷新好友列表";
+                    refreshFriendList(true);
+                    return;
+                }
+
+                if (route == QStringLiteral("friend.request.new") ||
+                    route == QStringLiteral("friend.request.rejected") ||
+                    route == QStringLiteral("conversation.created"))
+                {
+                    CHATCLIENT_LOG_INFO("chat.window")
+                        << "收到实时业务事件，route=" << route;
+                }
+            });
 
     switchSection(SidebarSection::kMessages);
     handleSessionSelectionChanged();
@@ -1275,7 +1295,7 @@ void ChatWindow::handleFriendSelectionChanged()
 
 void ChatWindow::showAddFriendDialog()
 {
-    AddFriendDialog dialog(m_authService, this);
+    AddFriendDialog dialog(m_authService, m_conversationManager, this);
     dialog.exec();
     refreshFriendList(true);
 }

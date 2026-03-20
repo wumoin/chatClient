@@ -192,8 +192,16 @@ class ConversationManager : public QObject
      */
     void conversationBootstrapFailed(const QString &message);
 
+    /**
+     * @brief 收到服务端主动推送的 `ws.new` 业务事件。
+     * @param route 当前业务路由。
+     * @param data 当前业务载荷。
+     */
+    void realtimeNewEventReceived(const QString &route, const QJsonObject &data);
+
   private:
     ConversationRuntimeState &ensureState(const QString &conversationId);
+    void handleRealtimeNewEvent(const QString &route, const QJsonObject &data);
     void resetConversationData();
     QString currentSessionKey() const;
     static QString localizeConversationApiError(

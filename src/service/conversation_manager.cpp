@@ -118,6 +118,10 @@ ConversationManager::ConversationManager(QObject *parent)
             &chatclient::ws::ChatWsClient::authenticationFailed,
             this,
             &ConversationManager::realtimeAuthenticationFailed);
+    connect(m_chatWsClient,
+            &chatclient::ws::ChatWsClient::newEventReceived,
+            this,
+            &ConversationManager::handleRealtimeNewEvent);
 }
 
 void ConversationManager::setAuthService(
@@ -419,6 +423,58 @@ ConversationManager::ConversationRuntimeState &
 ConversationManager::ensureState(const QString &conversationId)
 {
     return m_runtimeStates[conversationId];
+}
+
+void ConversationManager::handleRealtimeNewEvent(const QString &route,
+                                                 const QJsonObject &data)
+{
+    emit realtimeNewEventReceived(route, data);
+
+    if (route == QStringLiteral("conversation.created"))
+    {
+        const QJsonValue conversationValue =
+            data.value(QStringLiteral("conversation"));
+        if (!conversationValue.isObject())
+        {
+            CHATCLIENT_LOG_WARN("conversation.manager")
+                << "实时会话创建事件缺少 conversation 对象";
+            return;
+        }
+
+        chatclient::dto::conversation::ConversationSummaryDto conversation;
+        QString errorMessage;
+        if (!chatclient::dto::conversation::parseConversationSummary(
+                conversationValue.toObject(), &conversation, &errorMessage))
+        {
+            CHATCLIENT_LOG_WARN("conversation.manager")
+                << "解析实时会话创建事件失败，message="
+                << errorMessage;
+            return;
+        }
+
+        m_conversationListModel->upsertConversation(conversation);
+        ensureState(conversation.conversationId);
+        emit conversationListUpdated();
+
+        CHATCLIENT_LOG_INFO("conversation.manager")
+            << "已接入实时会话创建事件，conversation_id="
+            << conversation.conversationId
+            << " peer_user_id="
+            << conversation.peerUser.userId;
+        return;
+    }
+
+    if (route == QStringLiteral("friend.request.new") ||
+        route == QStringLiteral("friend.request.accepted") ||
+        route == QStringLiteral("friend.request.rejected"))
+    {
+        CHATCLIENT_LOG_INFO("conversation.manager")
+            << "已接入实时好友事件，route=" << route;
+        return;
+    }
+
+    CHATCLIENT_LOG_DEBUG("conversation.manager")
+        << "忽略当前未接入的实时业务路由，route=" << route;
 }
 
 void ConversationManager::resetConversationData()

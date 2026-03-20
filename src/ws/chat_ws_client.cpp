@@ -301,6 +301,25 @@ void ChatWsClient::handleTextMessageReceived(const QString &message)
         return;
     }
 
+    if (envelope.type == QStringLiteral("ws.new"))
+    {
+        chatclient::dto::ws::WsNewEventDto payload;
+        if (!chatclient::dto::ws::parseWsNewPayload(envelope.payload,
+                                                    &payload,
+                                                    &errorMessage))
+        {
+            CHATCLIENT_LOG_WARN(kWsLogTag)
+                << "解析 ws.new 失败，message=" << errorMessage;
+            updateStatus(QStringLiteral("实时通道收到无效推送事件"));
+            return;
+        }
+
+        CHATCLIENT_LOG_INFO(kWsLogTag)
+            << "收到实时推送事件，route=" << payload.route;
+        emit newEventReceived(payload.route, payload.data);
+        return;
+    }
+
     CHATCLIENT_LOG_DEBUG(kWsLogTag)
         << "忽略暂不支持的实时事件类型，type=" << envelope.type;
 }

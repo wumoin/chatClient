@@ -173,6 +173,17 @@ struct SendTextMessageResponseDto
 };
 
 /**
+ * @brief 解析单条会话摘要对象。
+ * @param object 当前会话摘要对象。
+ * @param out 成功时写入解析后的 DTO。
+ * @param errorMessage 解析失败时写入原因，可为空。
+ * @return true 表示解析成功；false 表示结构不符合当前协议。
+ */
+bool parseConversationSummary(const QJsonObject &object,
+                              ConversationSummaryDto *out,
+                              QString *errorMessage);
+
+/**
  * @brief 将创建私聊请求 DTO 转成 JSON 对象。
  * @param request 当前待提交的创建私聊请求。
  * @return 可直接序列化发送给服务端的 JSON 对象。

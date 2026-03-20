@@ -77,6 +77,13 @@ class ChatWsClient : public QObject
      */
     void authenticationFailed(const QString &message);
 
+    /**
+     * @brief 收到服务端主动推送的 `ws.new` 业务事件。
+     * @param route 当前事件的业务路由。
+     * @param data 当前事件的业务载荷。
+     */
+    void newEventReceived(const QString &route, const QJsonObject &data);
+
   private:
     /**
      * @brief 处理底层连接成功事件，并发送 `ws.auth`。

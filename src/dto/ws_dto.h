@@ -51,6 +51,15 @@ struct WsErrorDto
 };
 
 /**
+ * @brief `ws.new` 通用业务事件载荷 DTO。
+ */
+struct WsNewEventDto
+{
+    QString route;
+    QJsonObject data;
+};
+
+/**
  * @brief 把统一信封 DTO 转成 JSON 对象。
  * @param envelope 已组装完成的信封 DTO。
  * @return 可直接序列化发给服务端的 JSON 对象。
@@ -96,5 +105,16 @@ bool parseWsAuthOkPayload(const QJsonObject &json,
 bool parseWsErrorPayload(const QJsonObject &json,
                          WsErrorDto *out,
                          QString *errorMessage);
+
+/**
+ * @brief 解析 `ws.new` 载荷。
+ * @param json 信封中的 `payload` 对象。
+ * @param out 成功时写入业务事件载荷。
+ * @param errorMessage 失败时写入错误信息，可为空。
+ * @return true 表示解析成功；false 表示结构不合法。
+ */
+bool parseWsNewPayload(const QJsonObject &json,
+                       WsNewEventDto *out,
+                       QString *errorMessage);
 
 }  // namespace chatclient::dto::ws

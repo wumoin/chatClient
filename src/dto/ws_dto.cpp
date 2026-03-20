@@ -147,4 +147,37 @@ bool parseWsErrorPayload(const QJsonObject &json,
     return true;
 }
 
+bool parseWsNewPayload(const QJsonObject &json,
+                       WsNewEventDto *out,
+                       QString *errorMessage)
+{
+    const auto fail = [errorMessage](const QString &message) {
+        if (errorMessage)
+        {
+            *errorMessage = message;
+        }
+        return false;
+    };
+
+    const auto routeValue = json.value(QStringLiteral("route"));
+    if (!routeValue.isString())
+    {
+        return fail(QStringLiteral("field 'route' must be a string"));
+    }
+
+    const auto dataValue = json.value(QStringLiteral("data"));
+    if (!dataValue.isObject())
+    {
+        return fail(QStringLiteral("field 'data' must be an object"));
+    }
+
+    if (out)
+    {
+        out->route = routeValue.toString().trimmed();
+        out->data = dataValue.toObject();
+    }
+
+    return true;
+}
+
 }  // namespace chatclient::dto::ws

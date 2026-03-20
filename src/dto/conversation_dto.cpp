@@ -185,9 +185,9 @@ bool parseConversationMember(const QJsonObject &object,
     return true;
 }
 
-bool parseConversationSummary(const QJsonObject &object,
-                              ConversationSummaryDto *out,
-                              QString *errorMessage)
+bool parseConversationSummaryObject(const QJsonObject &object,
+                                    ConversationSummaryDto *out,
+                                    QString *errorMessage)
 {
     ConversationSummaryDto conversation;
     if (!readRequiredString(object,
@@ -419,9 +419,9 @@ bool parseCreatePrivateConversationSuccessResponse(
 
     CreatePrivateConversationResponseDto response;
     response.requestId = readOptionalString(root, QStringLiteral("request_id"));
-    if (!parseConversationSummary(conversationObject,
-                                  &response.conversation,
-                                  errorMessage))
+    if (!parseConversationSummaryObject(conversationObject,
+                                        &response.conversation,
+                                        errorMessage))
     {
         return false;
     }
@@ -468,7 +468,9 @@ bool parseConversationListSuccessResponse(const QJsonObject &root,
         }
 
         ConversationSummaryDto item;
-        if (!parseConversationSummary(itemValue.toObject(), &item, errorMessage))
+        if (!parseConversationSummaryObject(itemValue.toObject(),
+                                            &item,
+                                            errorMessage))
         {
             return false;
         }
@@ -640,6 +642,13 @@ ApiErrorDto parseApiErrorResponse(const QJsonObject &root,
     }
 
     return error;
+}
+
+bool parseConversationSummary(const QJsonObject &object,
+                              ConversationSummaryDto *out,
+                              QString *errorMessage)
+{
+    return parseConversationSummaryObject(object, out, errorMessage);
 }
 
 }  // namespace chatclient::dto::conversation

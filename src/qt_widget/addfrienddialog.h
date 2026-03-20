@@ -14,6 +14,7 @@ class QFrame;
 
 namespace chatclient::service {
 class AuthService;
+class ConversationManager;
 class FriendService;
 }
 
@@ -28,9 +29,11 @@ class AddFriendDialog : public QDialog
     /**
      * @brief 构造“添加好友”弹窗。
      * @param authService 当前认证服务，用于读取 access token。
+     * @param conversationManager 当前会话调度器，用于接收实时事件，可为空。
      * @param parent 父级 QWidget，可为空。
      */
     explicit AddFriendDialog(chatclient::service::AuthService *authService,
+                             chatclient::service::ConversationManager *conversationManager,
                              QWidget *parent = nullptr);
 
   private:
@@ -113,6 +116,7 @@ class AddFriendDialog : public QDialog
     QLabel *m_incomingEmptyHintLabel = nullptr;
     QLabel *m_statusLabel = nullptr;
     QPushButton *m_submitButton = nullptr;
+    chatclient::service::ConversationManager *m_conversationManager = nullptr;
     chatclient::service::FriendService *m_friendService = nullptr;
     chatclient::dto::friendship::SearchUserResponseDto m_currentSearchResult;
     chatclient::dto::friendship::FriendRequestItems m_outgoingRequests;
