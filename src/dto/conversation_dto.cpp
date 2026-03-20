@@ -651,4 +651,11 @@ bool parseConversationSummary(const QJsonObject &object,
     return parseConversationSummaryObject(object, out, errorMessage);
 }
 
+bool parseConversationMessageObject(const QJsonObject &object,
+                                    ConversationMessageDto *out,
+                                    QString *errorMessage)
+{
+    return parseConversationMessage(object, out, errorMessage);
+}
+
 }  // namespace chatclient::dto::conversation

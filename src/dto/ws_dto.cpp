@@ -147,6 +147,60 @@ bool parseWsErrorPayload(const QJsonObject &json,
     return true;
 }
 
+bool parseWsAckPayload(const QJsonObject &json,
+                       WsAckEventDto *out,
+                       QString *errorMessage)
+{
+    const auto fail = [errorMessage](const QString &message) {
+        if (errorMessage)
+        {
+            *errorMessage = message;
+        }
+        return false;
+    };
+
+    const auto routeValue = json.value(QStringLiteral("route"));
+    if (!routeValue.isString())
+    {
+        return fail(QStringLiteral("field 'route' must be a string"));
+    }
+
+    const auto okValue = json.value(QStringLiteral("ok"));
+    if (!okValue.isBool())
+    {
+        return fail(QStringLiteral("field 'ok' must be a boolean"));
+    }
+
+    const auto codeValue = json.value(QStringLiteral("code"));
+    if (!codeValue.isDouble())
+    {
+        return fail(QStringLiteral("field 'code' must be an integer"));
+    }
+
+    const auto messageValue = json.value(QStringLiteral("message"));
+    if (!messageValue.isString())
+    {
+        return fail(QStringLiteral("field 'message' must be a string"));
+    }
+
+    const auto dataValue = json.value(QStringLiteral("data"));
+    if (!dataValue.isObject())
+    {
+        return fail(QStringLiteral("field 'data' must be an object"));
+    }
+
+    if (out)
+    {
+        out->route = routeValue.toString().trimmed();
+        out->ok = okValue.toBool();
+        out->code = codeValue.toInt();
+        out->message = messageValue.toString().trimmed();
+        out->data = dataValue.toObject();
+    }
+
+    return true;
+}
+
 bool parseWsNewPayload(const QJsonObject &json,
                        WsNewEventDto *out,
                        QString *errorMessage)

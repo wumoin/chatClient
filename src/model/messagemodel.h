@@ -40,6 +40,14 @@ struct MessageFilePayload {
 };
 
 struct MessageItem {
+    // 当前消息所属会话 ID。
+    QString conversationId;
+    // 服务端正式消息 ID。
+    QString messageId;
+    // 客户端本地消息 ID，用于 ack/new 去重。
+    QString clientMessageId;
+    // 会话内顺序号。
+    qint64 seq = 0;
     // 发送者展示名，例如“我”“李华”。
     QString author;
     // 文本内容：
@@ -76,6 +84,9 @@ public:
         TimeRole,
         FromSelfRole,
         MessageTypeRole,
+        MessageIdRole,
+        ClientMessageIdRole,
+        SeqRole,
         ImageLocalPathRole,
         ImageRemoteUrlRole,
         ImageWidthRole,
@@ -116,6 +127,11 @@ public:
      * @param item 待追加的完整消息结构。
      */
     void addMessageItem(const MessageItem &item);
+    /**
+     * @brief 插入或更新一条消息，避免 ack/new 重复插入。
+     * @param item 待写入的消息项。
+     */
+    void upsertMessageItem(const MessageItem &item);
     /**
      * @brief 追加文本消息。
      * @param author 发送者名称。
@@ -173,5 +189,8 @@ public:
     void clear();
 
 private:
+    int findMessageRowByIdentity(const MessageItem &item) const;
+    int insertionRowForMessage(const MessageItem &item) const;
+
     QVector<MessageItem> m_messages;
 };

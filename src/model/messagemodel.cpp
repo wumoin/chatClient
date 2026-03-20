@@ -63,6 +63,12 @@ QVariant MessageModel::data(const QModelIndex &index, int role) const
         return item.fromSelf;
     case MessageTypeRole:
         return messageTypeToInt(item.messageType);
+    case MessageIdRole:
+        return item.messageId;
+    case ClientMessageIdRole:
+        return item.clientMessageId;
+    case SeqRole:
+        return item.seq;
     case ImageLocalPathRole:
         return item.image.localPath;
     case ImageRemoteUrlRole:
@@ -93,6 +99,9 @@ QHash<int, QByteArray> MessageModel::roleNames() const
         {TimeRole, "timeText"},
         {FromSelfRole, "fromSelf"},
         {MessageTypeRole, "messageType"},
+        {MessageIdRole, "messageId"},
+        {ClientMessageIdRole, "clientMessageId"},
+        {SeqRole, "seq"},
         {ImageLocalPathRole, "imageLocalPath"},
         {ImageRemoteUrlRole, "imageRemoteUrl"},
         {ImageWidthRole, "imageWidth"},
@@ -111,6 +120,23 @@ void MessageModel::addMessageItem(const MessageItem &item)
     // 必须在容器修改前后成对调用，QListView 才能做增量刷新与滚动位置维护。
     beginInsertRows(QModelIndex(), row, row);
     m_messages.push_back(item);
+    endInsertRows();
+}
+
+void MessageModel::upsertMessageItem(const MessageItem &item)
+{
+    const int existingRow = findMessageRowByIdentity(item);
+    if (existingRow >= 0)
+    {
+        m_messages[existingRow] = item;
+        const QModelIndex changedIndex = index(existingRow, 0);
+        emit dataChanged(changedIndex, changedIndex);
+        return;
+    }
+
+    const int row = insertionRowForMessage(item);
+    beginInsertRows(QModelIndex(), row, row);
+    m_messages.insert(row, item);
     endInsertRows();
 }
 
@@ -185,4 +211,61 @@ void MessageModel::clear()
     beginResetModel();
     m_messages.clear();
     endResetModel();
+}
+
+int MessageModel::findMessageRowByIdentity(const MessageItem &item) const
+{
+    if (!item.messageId.trimmed().isEmpty())
+    {
+        for (int row = 0; row < m_messages.size(); ++row)
+        {
+            if (m_messages.at(row).messageId == item.messageId)
+            {
+                return row;
+            }
+        }
+    }
+
+    if (!item.clientMessageId.trimmed().isEmpty())
+    {
+        for (int row = 0; row < m_messages.size(); ++row)
+        {
+            if (m_messages.at(row).clientMessageId == item.clientMessageId)
+            {
+                return row;
+            }
+        }
+    }
+
+    if (item.seq > 0)
+    {
+        for (int row = 0; row < m_messages.size(); ++row)
+        {
+            if (m_messages.at(row).seq == item.seq)
+            {
+                return row;
+            }
+        }
+    }
+
+    return -1;
+}
+
+int MessageModel::insertionRowForMessage(const MessageItem &item) const
+{
+    if (item.seq <= 0)
+    {
+        return m_messages.size();
+    }
+
+    for (int row = 0; row < m_messages.size(); ++row)
+    {
+        const qint64 existingSeq = m_messages.at(row).seq;
+        if (existingSeq > 0 && existingSeq > item.seq)
+        {
+            return row;
+        }
+    }
+
+    return m_messages.size();
 }

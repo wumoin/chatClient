@@ -53,6 +53,13 @@ public:
     void replaceMessageItems(const QString &conversationId,
                              const QVector<MessageItem> &items);
     /**
+     * @brief 向指定会话插入或更新一条消息。
+     * @param conversationId 会话唯一标识。
+     * @param item 完整消息项。
+     */
+    void upsertMessageItem(const QString &conversationId,
+                           const MessageItem &item);
+    /**
      * @brief 清空指定会话当前已加载的消息集合。
      * @param conversationId 会话唯一标识。
      */

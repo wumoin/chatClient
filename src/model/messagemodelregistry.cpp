@@ -44,6 +44,14 @@ void MessageModelRegistry::replaceMessageItems(
     }
 }
 
+void MessageModelRegistry::upsertMessageItem(const QString &conversationId,
+                                             const MessageItem &item)
+{
+    if (MessageModel *target = ensureModel(conversationId)) {
+        target->upsertMessageItem(item);
+    }
+}
+
 void MessageModelRegistry::clearConversation(const QString &conversationId)
 {
     if (MessageModel *target = model(conversationId)) {

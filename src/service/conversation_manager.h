@@ -4,6 +4,7 @@
 #include "dto/conversation_dto.h"
 
 #include <QHash>
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 
@@ -51,6 +52,14 @@ class ConversationManager : public QObject
         bool hasMoreBefore = false;
         bool initialized = false;
         bool loading = false;
+    };
+
+    struct PendingTextMessage
+    {
+        QString conversationId;
+        QString clientMessageId;
+        QString text;
+        qint64 sentAtMs = 0;
     };
 
     /**
@@ -143,6 +152,14 @@ class ConversationManager : public QObject
                                 bool fromSelf);
 
     /**
+     * @brief 通过 WS 发送一条文本消息。
+     * @param conversationId 会话唯一标识。
+     * @param text 待发送的文本内容。
+     * @return true 表示请求已发出；false 表示当前通道不可用或参数无效。
+     */
+    bool sendTextMessage(const QString &conversationId, const QString &text);
+
+    /**
      * @brief 返回指定会话当前的轻量运行时状态。
      * @param conversationId 会话唯一标识。
      * @return 该会话当前运行时状态的副本。
@@ -201,11 +218,29 @@ class ConversationManager : public QObject
 
   private:
     ConversationRuntimeState &ensureState(const QString &conversationId);
+    void handleRealtimeAckEvent(const QString &route,
+                                bool ok,
+                                int code,
+                                const QString &message,
+                                const QJsonObject &data,
+                                const QString &requestId);
+    void handleMessageSendTextAck(bool ok,
+                                  int code,
+                                  const QString &message,
+                                  const QJsonObject &data,
+                                  const QString &requestId);
     void handleRealtimeNewEvent(const QString &route, const QJsonObject &data);
+    void handleMessageCreatedEvent(const QJsonObject &data);
+    void handleConversationCreatedEvent(const QJsonObject &data);
+    void handleFriendRealtimeEvent(const QString &route);
     void resetConversationData();
     QString currentSessionKey() const;
     static QString localizeConversationApiError(
         const chatclient::dto::conversation::ApiErrorDto &error);
+    void updateConversationSummaryFromMessage(
+        const chatclient::dto::conversation::ConversationMessageDto &message,
+        const QString &previewText);
+    QString currentUserId() const;
 
     chatclient::api::ConversationApiClient *m_conversationApiClient = nullptr;
     chatclient::ws::ChatWsClient *m_chatWsClient = nullptr;
@@ -217,6 +252,7 @@ class ConversationManager : public QObject
     QString m_loadedSessionKey;
     QString m_bootstrapSessionKey;
     bool m_bootstrapInProgress = false;
+    QHash<QString, PendingTextMessage> m_pendingTextMessagesByRequestId;
 };
 
 }  // namespace chatclient::service

@@ -210,6 +210,38 @@ void ChatWsClient::disconnectFromServer()
     updateStatus(QStringLiteral("实时通道已断开"));
 }
 
+QString ChatWsClient::sendBusinessEvent(const QString &route,
+                                        const QJsonObject &data)
+{
+    const QString trimmedRoute = route.trimmed();
+    if (trimmedRoute.isEmpty())
+    {
+        CHATCLIENT_LOG_WARN(kWsLogTag)
+            << "拒绝发送实时业务事件，route 为空";
+        return QString();
+    }
+
+    if (m_socket->state() != QAbstractSocket::ConnectedState || !m_authenticated)
+    {
+        CHATCLIENT_LOG_WARN(kWsLogTag)
+            << "拒绝发送实时业务事件，当前通道不可用，route="
+            << trimmedRoute
+            << " authenticated=" << m_authenticated;
+        return QString();
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("route"), trimmedRoute);
+    payload.insert(QStringLiteral("data"), data);
+
+    QString action = trimmedRoute;
+    action.replace(QLatin1Char('.'), QLatin1Char('_'));
+    const QString requestId =
+        createRequestId(action.isEmpty() ? QStringLiteral("send") : action);
+    sendEnvelope(QStringLiteral("ws.send"), requestId, payload);
+    return requestId;
+}
+
 bool ChatWsClient::isAuthenticated() const
 {
     return m_authenticated;
@@ -317,6 +349,32 @@ void ChatWsClient::handleTextMessageReceived(const QString &message)
         CHATCLIENT_LOG_INFO(kWsLogTag)
             << "收到实时推送事件，route=" << payload.route;
         emit newEventReceived(payload.route, payload.data);
+        return;
+    }
+
+    if (envelope.type == QStringLiteral("ws.ack"))
+    {
+        chatclient::dto::ws::WsAckEventDto payload;
+        if (!chatclient::dto::ws::parseWsAckPayload(envelope.payload,
+                                                    &payload,
+                                                    &errorMessage))
+        {
+            CHATCLIENT_LOG_WARN(kWsLogTag)
+                << "解析 ws.ack 失败，message=" << errorMessage;
+            updateStatus(QStringLiteral("实时通道收到无效确认事件"));
+            return;
+        }
+
+        CHATCLIENT_LOG_INFO(kWsLogTag)
+            << "收到实时确认事件，route=" << payload.route
+            << " ok=" << payload.ok
+            << " code=" << payload.code;
+        emit ackReceived(payload.route,
+                         payload.ok,
+                         payload.code,
+                         payload.message,
+                         payload.data,
+                         envelope.requestId);
         return;
     }
 

@@ -51,6 +51,18 @@ struct WsErrorDto
 };
 
 /**
+ * @brief `ws.ack` 通用业务确认载荷 DTO。
+ */
+struct WsAckEventDto
+{
+    QString route;
+    bool ok = false;
+    int code = 0;
+    QString message;
+    QJsonObject data;
+};
+
+/**
  * @brief `ws.new` 通用业务事件载荷 DTO。
  */
 struct WsNewEventDto
@@ -105,6 +117,17 @@ bool parseWsAuthOkPayload(const QJsonObject &json,
 bool parseWsErrorPayload(const QJsonObject &json,
                          WsErrorDto *out,
                          QString *errorMessage);
+
+/**
+ * @brief 解析 `ws.ack` 载荷。
+ * @param json 信封中的 `payload` 对象。
+ * @param out 成功时写入业务确认载荷。
+ * @param errorMessage 失败时写入错误信息，可为空。
+ * @return true 表示解析成功；false 表示结构不合法。
+ */
+bool parseWsAckPayload(const QJsonObject &json,
+                       WsAckEventDto *out,
+                       QString *errorMessage);
 
 /**
  * @brief 解析 `ws.new` 载荷。

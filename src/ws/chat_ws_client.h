@@ -52,6 +52,14 @@ class ChatWsClient : public QObject
     void disconnectFromServer();
 
     /**
+     * @brief 发送统一业务事件。
+     * @param route 业务路由。
+     * @param data 业务载荷。
+     * @return 成功发出时返回当前 request_id；失败时返回空字符串。
+     */
+    QString sendBusinessEvent(const QString &route, const QJsonObject &data);
+
+    /**
      * @brief 判断当前长连接是否已经完成 `ws.auth`。
      * @return true 表示已认证；false 表示尚未完成认证或已断开。
      */
@@ -83,6 +91,22 @@ class ChatWsClient : public QObject
      * @param data 当前事件的业务载荷。
      */
     void newEventReceived(const QString &route, const QJsonObject &data);
+
+    /**
+     * @brief 收到服务端返回的 `ws.ack` 业务确认。
+     * @param route 当前确认对应的业务路由。
+     * @param ok 本次业务动作是否成功。
+     * @param code 业务结果码。
+     * @param message 业务说明文本。
+     * @param data 当前确认附带的业务数据。
+     * @param requestId 当前确认对应的 request_id。
+     */
+    void ackReceived(const QString &route,
+                     bool ok,
+                     int code,
+                     const QString &message,
+                     const QJsonObject &data,
+                     const QString &requestId);
 
   private:
     /**

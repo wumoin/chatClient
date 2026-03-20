@@ -8,7 +8,9 @@
 #include "ws/chat_ws_client.h"
 
 #include <QDateTime>
+#include <QUuid>
 #include <memory>
+#include <functional>
 
 namespace chatclient::service {
 namespace {
@@ -42,18 +44,40 @@ QString messagePreview(const chatclient::dto::conversation::ConversationMessageD
     return QStringLiteral("[未知消息]");
 }
 
+QString displayPeerName(
+    const chatclient::dto::conversation::ConversationSummaryDto &conversation)
+{
+    if (!conversation.peerUser.nickname.trimmed().isEmpty()) {
+        return conversation.peerUser.nickname.trimmed();
+    }
+
+    if (!conversation.peerUser.account.trimmed().isEmpty()) {
+        return conversation.peerUser.account.trimmed();
+    }
+
+    return conversation.peerUser.userId;
+}
+
 QVector<MessageItem> toMessageItems(
     const QVector<chatclient::dto::conversation::ConversationMessageDto>
         &messages,
-    const QString &currentUserId)
+    const QString &currentUserId,
+    const std::function<QString(const chatclient::dto::conversation::
+                                    ConversationMessageDto &)> &authorResolver)
 {
     QVector<MessageItem> items;
     items.reserve(messages.size());
 
     for (const auto &message : messages) {
         MessageItem item;
-        item.author = message.senderId == currentUserId ? QStringLiteral("我")
-                                                        : message.senderId;
+        item.conversationId = message.conversationId;
+        item.messageId = message.messageId;
+        item.seq = message.seq;
+        if (message.hasClientMessageId) {
+            item.clientMessageId = message.clientMessageId;
+        }
+        item.author = authorResolver ? authorResolver(message)
+                                     : message.senderId;
         item.text = messagePreview(message);
         item.timeText = messageTimeText(message.createdAtMs);
         item.fromSelf = message.senderId == currentUserId;
@@ -122,6 +146,10 @@ ConversationManager::ConversationManager(QObject *parent)
             &chatclient::ws::ChatWsClient::newEventReceived,
             this,
             &ConversationManager::handleRealtimeNewEvent);
+    connect(m_chatWsClient,
+            &chatclient::ws::ChatWsClient::ackReceived,
+            this,
+            &ConversationManager::handleRealtimeAckEvent);
 }
 
 void ConversationManager::setAuthService(
@@ -383,8 +411,31 @@ void ConversationManager::applyConversationMessagesSnapshot(
 {
     const QString currentUserId =
         m_authService ? m_authService->currentSession().user.userId : QString();
+    QString peerDisplay;
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    if (m_conversationListModel->conversationById(conversationId, &conversation))
+    {
+        peerDisplay = displayPeerName(conversation);
+    }
+
     m_messageModelRegistry->replaceMessageItems(
-        conversationId, toMessageItems(response.items, currentUserId));
+        conversationId,
+        toMessageItems(
+            response.items,
+            currentUserId,
+            [currentUserId, peerDisplay](
+                const chatclient::dto::conversation::ConversationMessageDto
+                    &message) {
+                if (message.senderId == currentUserId) {
+                    return QStringLiteral("我");
+                }
+
+                if (!peerDisplay.trimmed().isEmpty()) {
+                    return peerDisplay;
+                }
+
+                return message.senderId;
+            }));
 
     ConversationRuntimeState &state = ensureState(conversationId);
     state.initialized = true;
@@ -413,6 +464,44 @@ void ConversationManager::appendLocalTextMessage(const QString &conversationId,
     }
 }
 
+bool ConversationManager::sendTextMessage(const QString &conversationId,
+                                          const QString &text)
+{
+    if (!m_chatWsClient || !m_chatWsClient->isAuthenticated()) {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "拒绝发送文本消息，实时通道当前不可用，conversation_id="
+            << conversationId;
+        return false;
+    }
+
+    const QString trimmedConversationId = conversationId.trimmed();
+    const QString trimmedText = text.trimmed();
+    if (trimmedConversationId.isEmpty() || trimmedText.isEmpty()) {
+        return false;
+    }
+
+    const QString clientMessageId =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QJsonObject data;
+    data.insert(QStringLiteral("conversation_id"), trimmedConversationId);
+    data.insert(QStringLiteral("client_message_id"), clientMessageId);
+    data.insert(QStringLiteral("text"), trimmedText);
+
+    const QString requestId = m_chatWsClient->sendBusinessEvent(
+        QStringLiteral("message.send_text"), data);
+    if (requestId.isEmpty()) {
+        return false;
+    }
+
+    PendingTextMessage pending;
+    pending.conversationId = trimmedConversationId;
+    pending.clientMessageId = clientMessageId;
+    pending.text = trimmedText;
+    pending.sentAtMs = QDateTime::currentMSecsSinceEpoch();
+    m_pendingTextMessagesByRequestId.insert(requestId, pending);
+    return true;
+}
+
 ConversationManager::ConversationRuntimeState
 ConversationManager::conversationState(const QString &conversationId) const
 {
@@ -425,42 +514,117 @@ ConversationManager::ensureState(const QString &conversationId)
     return m_runtimeStates[conversationId];
 }
 
+void ConversationManager::handleRealtimeAckEvent(const QString &route,
+                                                 const bool ok,
+                                                 const int code,
+                                                 const QString &message,
+                                                 const QJsonObject &data,
+                                                 const QString &requestId)
+{
+    if (route == QStringLiteral("message.send_text"))
+    {
+        handleMessageSendTextAck(ok, code, message, data, requestId);
+        return;
+    }
+
+    CHATCLIENT_LOG_DEBUG("conversation.manager")
+        << "忽略当前未接入的实时确认业务路由，route=" << route;
+}
+
+void ConversationManager::handleMessageSendTextAck(
+    const bool ok,
+    const int code,
+    const QString &message,
+    const QJsonObject &data,
+    const QString &requestId)
+{
+    const PendingTextMessage pending =
+        m_pendingTextMessagesByRequestId.take(requestId);
+    if (!ok)
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "文本消息发送确认失败，request_id="
+            << requestId
+            << " code="
+            << code
+            << " message="
+            << message;
+        return;
+    }
+
+    const QString conversationId =
+        data.value(QStringLiteral("conversation_id")).toString().trimmed();
+    const QString messageId =
+        data.value(QStringLiteral("message_id")).toString().trimmed();
+    const qint64 seq =
+        data.value(QStringLiteral("seq")).toVariant().toLongLong();
+    const qint64 createdAtMs =
+        data.value(QStringLiteral("created_at_ms")).toVariant().toLongLong();
+    QString clientMessageId =
+        data.value(QStringLiteral("client_message_id")).toString().trimmed();
+    if (clientMessageId.isEmpty()) {
+        clientMessageId = pending.clientMessageId;
+    }
+
+    if (conversationId.isEmpty() || messageId.isEmpty() || seq <= 0)
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "文本消息发送确认缺少关键字段，request_id=" << requestId;
+        return;
+    }
+
+    MessageItem item;
+    item.conversationId = conversationId;
+    item.messageId = messageId;
+    item.clientMessageId = clientMessageId;
+    item.seq = seq;
+    item.author = QStringLiteral("我");
+    item.text = pending.text;
+    item.timeText = messageTimeText(createdAtMs > 0 ? createdAtMs
+                                                    : pending.sentAtMs);
+    item.fromSelf = true;
+    item.messageType = MessageType::Text;
+    m_messageModelRegistry->upsertMessageItem(conversationId, item);
+
+    ConversationRuntimeState &state = ensureState(conversationId);
+    state.initialized = true;
+    state.lastLoadedMaxSeq = qMax(state.lastLoadedMaxSeq, seq);
+
+    chatclient::dto::conversation::ConversationMessageDto messageDto;
+    messageDto.messageId = messageId;
+    messageDto.conversationId = conversationId;
+    messageDto.seq = seq;
+    messageDto.senderId = currentUserId();
+    messageDto.hasClientMessageId = !clientMessageId.isEmpty();
+    messageDto.clientMessageId = clientMessageId;
+    messageDto.messageType = QStringLiteral("text");
+    messageDto.content.insert(QStringLiteral("text"), pending.text);
+    messageDto.createdAtMs = createdAtMs > 0 ? createdAtMs : pending.sentAtMs;
+    updateConversationSummaryFromMessage(messageDto, pending.text);
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "文本消息发送确认已接入，conversation_id="
+        << conversationId
+        << " message_id="
+        << messageId
+        << " seq="
+        << seq;
+}
+
 void ConversationManager::handleRealtimeNewEvent(const QString &route,
                                                  const QJsonObject &data)
 {
     emit realtimeNewEventReceived(route, data);
 
+    if (route == QStringLiteral("message.created"))
+    {
+        handleMessageCreatedEvent(data);
+        return;
+    }
+
     if (route == QStringLiteral("conversation.created"))
     {
-        const QJsonValue conversationValue =
-            data.value(QStringLiteral("conversation"));
-        if (!conversationValue.isObject())
-        {
-            CHATCLIENT_LOG_WARN("conversation.manager")
-                << "实时会话创建事件缺少 conversation 对象";
-            return;
-        }
-
-        chatclient::dto::conversation::ConversationSummaryDto conversation;
-        QString errorMessage;
-        if (!chatclient::dto::conversation::parseConversationSummary(
-                conversationValue.toObject(), &conversation, &errorMessage))
-        {
-            CHATCLIENT_LOG_WARN("conversation.manager")
-                << "解析实时会话创建事件失败，message="
-                << errorMessage;
-            return;
-        }
-
-        m_conversationListModel->upsertConversation(conversation);
-        ensureState(conversation.conversationId);
-        emit conversationListUpdated();
-
-        CHATCLIENT_LOG_INFO("conversation.manager")
-            << "已接入实时会话创建事件，conversation_id="
-            << conversation.conversationId
-            << " peer_user_id="
-            << conversation.peerUser.userId;
+        handleConversationCreatedEvent(data);
         return;
     }
 
@@ -468,8 +632,7 @@ void ConversationManager::handleRealtimeNewEvent(const QString &route,
         route == QStringLiteral("friend.request.accepted") ||
         route == QStringLiteral("friend.request.rejected"))
     {
-        CHATCLIENT_LOG_INFO("conversation.manager")
-            << "已接入实时好友事件，route=" << route;
+        handleFriendRealtimeEvent(route);
         return;
     }
 
@@ -477,11 +640,121 @@ void ConversationManager::handleRealtimeNewEvent(const QString &route,
         << "忽略当前未接入的实时业务路由，route=" << route;
 }
 
+void ConversationManager::handleMessageCreatedEvent(const QJsonObject &data)
+{
+    chatclient::dto::conversation::ConversationMessageDto message;
+    QString errorMessage;
+    if (!chatclient::dto::conversation::parseConversationMessageObject(
+            data, &message, &errorMessage))
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "解析实时消息事件失败，message=" << errorMessage;
+        return;
+    }
+
+    const QString userId = currentUserId();
+    QString peerDisplay;
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    if (m_conversationListModel->conversationById(message.conversationId,
+                                                  &conversation))
+    {
+        peerDisplay = displayPeerName(conversation);
+    }
+
+    const QVector<MessageItem> items = toMessageItems(
+        {message},
+        userId,
+        [userId, peerDisplay](
+            const chatclient::dto::conversation::ConversationMessageDto
+                &currentMessage) {
+            if (currentMessage.senderId == userId) {
+                return QStringLiteral("我");
+            }
+
+            if (!peerDisplay.trimmed().isEmpty()) {
+                return peerDisplay;
+            }
+
+            return currentMessage.senderId;
+        });
+    if (!items.isEmpty())
+    {
+        m_messageModelRegistry->upsertMessageItem(message.conversationId,
+                                                  items.constFirst());
+    }
+
+    ConversationRuntimeState &state = ensureState(message.conversationId);
+    state.initialized = true;
+    state.lastLoadedMaxSeq = qMax(state.lastLoadedMaxSeq, message.seq);
+    updateConversationSummaryFromMessage(message, messagePreview(message));
+
+    for (auto it = m_pendingTextMessagesByRequestId.begin();
+         it != m_pendingTextMessagesByRequestId.end();)
+    {
+        if (!message.clientMessageId.isEmpty() &&
+            it->clientMessageId == message.clientMessageId)
+        {
+            it = m_pendingTextMessagesByRequestId.erase(it);
+            continue;
+        }
+        ++it;
+    }
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "已接入实时消息事件，conversation_id="
+        << message.conversationId
+        << " message_id="
+        << message.messageId
+        << " seq="
+        << message.seq;
+}
+
+void ConversationManager::handleConversationCreatedEvent(
+    const QJsonObject &data)
+{
+    const QJsonValue conversationValue =
+        data.value(QStringLiteral("conversation"));
+    if (!conversationValue.isObject())
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "实时会话创建事件缺少 conversation 对象";
+        return;
+    }
+
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    QString errorMessage;
+    if (!chatclient::dto::conversation::parseConversationSummary(
+            conversationValue.toObject(), &conversation, &errorMessage))
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "解析实时会话创建事件失败，message="
+            << errorMessage;
+        return;
+    }
+
+    m_conversationListModel->upsertConversation(conversation);
+    ensureState(conversation.conversationId);
+    emit conversationListUpdated();
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "已接入实时会话创建事件，conversation_id="
+        << conversation.conversationId
+        << " peer_user_id="
+        << conversation.peerUser.userId;
+}
+
+void ConversationManager::handleFriendRealtimeEvent(const QString &route)
+{
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "已接入实时好友事件，route=" << route;
+}
+
 void ConversationManager::resetConversationData()
 {
     m_conversationListModel->clear();
     m_messageModelRegistry->clearAll();
     m_runtimeStates.clear();
+    m_pendingTextMessagesByRequestId.clear();
     m_loadedSessionKey.clear();
     m_bootstrapSessionKey.clear();
     m_bootstrapInProgress = false;
@@ -510,6 +783,46 @@ QString ConversationManager::localizeConversationApiError(
     }
 
     return QStringLiteral("同步会话数据失败，请稍后重试");
+}
+
+void ConversationManager::updateConversationSummaryFromMessage(
+    const chatclient::dto::conversation::ConversationMessageDto &message,
+    const QString &previewText)
+{
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    if (!m_conversationListModel->conversationById(message.conversationId,
+                                                   &conversation))
+    {
+        CHATCLIENT_LOG_DEBUG("conversation.manager")
+            << "当前消息对应的会话摘要尚未加载，conversation_id="
+            << message.conversationId;
+        return;
+    }
+
+    conversation.lastMessageSeq = qMax(conversation.lastMessageSeq, message.seq);
+    conversation.lastMessagePreview = previewText;
+    conversation.hasLastMessageAtMs = true;
+    conversation.lastMessageAtMs = message.createdAtMs;
+    if (message.senderId == currentUserId())
+    {
+        conversation.lastReadSeq = qMax(conversation.lastReadSeq, message.seq);
+    }
+    else
+    {
+        conversation.unreadCount = qMax<qint64>(0, conversation.unreadCount) + 1;
+    }
+
+    m_conversationListModel->upsertConversation(conversation);
+    emit conversationListUpdated();
+}
+
+QString ConversationManager::currentUserId() const
+{
+    if (!m_authService || !m_authService->hasActiveSession()) {
+        return QString();
+    }
+
+    return m_authService->currentSession().user.userId;
 }
 
 }  // namespace chatclient::service

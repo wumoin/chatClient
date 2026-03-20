@@ -1414,34 +1414,24 @@ void ChatWindow::updateFriendDetailAvatarImage(const QImage &image)
     m_friendDetailAvatarLabel->setText(QString());
 }
 
-void ChatWindow::appendMessage(const QString &author,
-                               const QString &text,
-                               const bool fromSelf)
-{
-    if (!m_messageListView || !m_conversationManager || m_currentConversationId.isEmpty()) {
-        return;
-    }
-
-    m_conversationManager->appendLocalTextMessage(
-        m_currentConversationId,
-        author,
-        text,
-        QTime::currentTime().toString(QStringLiteral("HH:mm")),
-        fromSelf);
-    m_messageListView->scrollToBottom();
-}
-
 void ChatWindow::handleSendMessage()
 {
-    if (!m_messageEditor || m_currentSection != SidebarSection::kMessages) {
+    if (!m_messageEditor || !m_conversationManager ||
+        m_currentSection != SidebarSection::kMessages) {
         return;
     }
 
     const QString text = m_messageEditor->toPlainText().trimmed();
-    if (text.isEmpty()) {
+    if (text.isEmpty() || m_currentConversationId.trimmed().isEmpty()) {
         return;
     }
 
-    appendMessage(QStringLiteral("我"), text, true);
+    if (!m_conversationManager->sendTextMessage(m_currentConversationId, text)) {
+        CHATCLIENT_LOG_WARN("chat.window")
+            << "通过实时通道发送文本消息失败，conversation_id="
+            << m_currentConversationId;
+        return;
+    }
+
     m_messageEditor->clear();
 }

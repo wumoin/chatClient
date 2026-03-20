@@ -203,14 +203,6 @@ class ChatWindow : public QWidget
     void updateFriendDetailAvatarImage(const QImage &image);
 
     /**
-     * @brief 向当前会话追加一条文本消息并滚动到底部。
-     * @param author 发送者名称。
-     * @param text 消息正文。
-     * @param fromSelf 是否为当前用户发送。
-     */
-    void appendMessage(const QString &author, const QString &text, bool fromSelf);
-
-    /**
      * @brief 处理发送动作并将输入框内容写入当前会话。
      */
     void handleSendMessage();
