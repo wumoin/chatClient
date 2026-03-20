@@ -398,8 +398,17 @@ void ConversationManager::createPrivateConversation(
 void ConversationManager::applyConversationListSnapshot(
     const chatclient::dto::conversation::ConversationListResponseDto &response)
 {
-    m_conversationListModel->setConversations(response.conversations);
-    for (const auto &conversation : response.conversations) {
+    QVector<chatclient::dto::conversation::ConversationSummaryDto> conversations =
+        response.conversations;
+    for (auto &conversation : conversations)
+    {
+        conversation.lastReadSeq =
+            qMax(conversation.lastReadSeq, conversation.lastMessageSeq);
+        conversation.unreadCount = 0;
+    }
+
+    m_conversationListModel->setConversations(conversations);
+    for (const auto &conversation : conversations) {
         ensureState(conversation.conversationId);
     }
 }
@@ -499,6 +508,36 @@ bool ConversationManager::sendTextMessage(const QString &conversationId,
     pending.text = trimmedText;
     pending.sentAtMs = QDateTime::currentMSecsSinceEpoch();
     m_pendingTextMessagesByRequestId.insert(requestId, pending);
+    return true;
+}
+
+bool ConversationManager::markConversationReadLocally(
+    const QString &conversationId)
+{
+    const QString trimmedConversationId = conversationId.trimmed();
+    if (trimmedConversationId.isEmpty()) {
+        return false;
+    }
+
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    if (!m_conversationListModel->conversationById(trimmedConversationId,
+                                                   &conversation))
+    {
+        return false;
+    }
+
+    const qint64 nextLastReadSeq =
+        qMax(conversation.lastReadSeq, conversation.lastMessageSeq);
+    const bool changed =
+        conversation.unreadCount > 0 || nextLastReadSeq != conversation.lastReadSeq;
+    if (!changed) {
+        return false;
+    }
+
+    conversation.unreadCount = 0;
+    conversation.lastReadSeq = nextLastReadSeq;
+    m_conversationListModel->upsertConversation(conversation);
+    emit conversationListUpdated();
     return true;
 }
 

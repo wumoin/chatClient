@@ -170,6 +170,31 @@ QListWidget#entityList::item:selected {
     color: #14335d;
 }
 
+QWidget#conversationListItemWidget {
+    background: transparent;
+}
+
+QLabel#conversationItemTitleLabel {
+    color: #18304f;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QLabel#conversationItemPreviewLabel {
+    color: #6b7f9d;
+    font-size: 12px;
+}
+
+QLabel#conversationUnreadBadge {
+    min-width: 28px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #1a5ed0;
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+}
+
 QFrame#contentPanel {
     background: rgba(255, 255, 255, 0.92);
     border: 1px solid #d7e1f2;

@@ -3,6 +3,8 @@
 #include "dto/conversation_dto.h"
 #include "dto/friend_dto.h"
 
+#include <QHash>
+#include <QPixmap>
 #include <QString>
 #include <QWidget>
 
@@ -93,6 +95,14 @@ class ChatWindow : public QWidget
      * @param event 关闭事件对象。
      */
     void closeEvent(QCloseEvent *event) override;
+
+    /**
+     * @brief 统一拦截输入框中的回车事件，实现 Enter 发送、Shift+Enter 换行。
+     * @param watched 当前被监听的对象。
+     * @param event 当前事件。
+     * @return true 表示事件已消费；false 表示继续交给默认处理。
+     */
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
     enum class SidebarSection
     {
@@ -203,6 +213,38 @@ class ChatWindow : public QWidget
     void updateFriendDetailAvatarImage(const QImage &image);
 
     /**
+     * @brief 更新消息页头部标题和副标题。
+     * @param title 当前会话标题。
+     * @param meta 当前会话副标题。
+     */
+    void setConversationHeaderText(const QString &title,
+                                   const QString &meta);
+
+    /**
+     * @brief 更新消息输入区上方提示文案。
+     * @param text 当前提示文本。
+     */
+    void setConversationComposerHintText(const QString &text);
+
+    /**
+     * @brief 统一更新消息页顶部操作按钮的可用状态。
+     * @param enabled true 表示可点击；false 表示禁用。
+     */
+    void setConversationHeaderActionsEnabled(bool enabled);
+
+    /**
+     * @brief 统一更新消息输入区相关控件的可用状态。
+     * @param enabled true 表示可编辑 / 可点击；false 表示禁用。
+     */
+    void setMessageComposerActionsEnabled(bool enabled);
+
+    /**
+     * @brief 更新发送按钮文案。
+     * @param text 需要展示的新文案。
+     */
+    void setMessageSendButtonText(const QString &text);
+
+    /**
      * @brief 处理发送动作并将输入框内容写入当前会话。
      */
     void handleSendMessage();
@@ -250,6 +292,9 @@ class ChatWindow : public QWidget
     QStackedWidget *m_contentStack = nullptr;
     QLabel *m_conversationTitleLabel = nullptr;
     QLabel *m_conversationMetaLabel = nullptr;
+    QPushButton *m_conversationVoiceButton = nullptr;
+    QPushButton *m_conversationVideoButton = nullptr;
+    QLabel *m_messageComposerHintLabel = nullptr;
     QLabel *m_friendDetailAvatarLabel = nullptr;
     QLabel *m_friendDetailTitleLabel = nullptr;
     QLabel *m_friendDetailMetaLabel = nullptr;
@@ -259,7 +304,11 @@ class ChatWindow : public QWidget
     // 消息页：仍然沿用现有 QListView + model + delegate 展示链路。
     MessageListView *m_messageListView = nullptr;
     QString m_currentConversationId;
+    QHash<QString, QPixmap> m_conversationAvatarCache;
     QTextEdit *m_messageEditor = nullptr;
+    QPushButton *m_messageEmojiButton = nullptr;
+    QPushButton *m_messageFileButton = nullptr;
+    QPushButton *m_messageSendButton = nullptr;
     chatclient::api::UserApiClient *m_userApiClient = nullptr;
     chatclient::service::AuthService *m_authService = nullptr;
     chatclient::service::ConversationManager *m_conversationManager = nullptr;

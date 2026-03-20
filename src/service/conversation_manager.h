@@ -160,6 +160,13 @@ class ConversationManager : public QObject
     bool sendTextMessage(const QString &conversationId, const QString &text);
 
     /**
+     * @brief 在本地将指定会话标记为已读，并清空未读数。
+     * @param conversationId 会话唯一标识。
+     * @return true 表示本地摘要已发生变化；false 表示无需更新。
+     */
+    bool markConversationReadLocally(const QString &conversationId);
+
+    /**
      * @brief 返回指定会话当前的轻量运行时状态。
      * @param conversationId 会话唯一标识。
      * @return 该会话当前运行时状态的副本。
