@@ -13,6 +13,8 @@ class QImage;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QMenu;
+class QModelIndex;
 class QPushButton;
 class QStackedWidget;
 class QTextEdit;
@@ -235,9 +237,57 @@ class ChatWindow : public QWidget
     void handleSendMessage();
 
     /**
-     * @brief 选择一张或多张本地图片并发送到当前会话。
+     * @brief 选择一张或多张本地附件并发送到当前会话。
+     *
+     * 当前入口统一承接图片和普通文件：
+     * - 文件选择框默认展示“所有文件”，避免把附件能力误导成扩展名白名单
+     * - 可识别为图片的文件走 `message.send_image`
+     * - 其它任意本地文件走 `message.send_file`
      */
-    void handleSendImage();
+    void handleSendAttachment();
+    /**
+     * @brief 响应消息列表里的文件卡片点击。
+     * @param index 当前命中的文件消息索引。
+     */
+    void handleFileMessageActivated(const QModelIndex &index);
+    /**
+     * @brief 把指定文件消息下载到默认目录。
+     * @param index 当前命中的文件消息索引。
+     */
+    void handleFileMessageDownloadRequested(const QModelIndex &index);
+    /**
+     * @brief 把指定文件消息下载到用户自定义路径。
+     * @param index 当前命中的文件消息索引。
+     * @param targetPath 用户选择的目标绝对路径。
+     */
+    void handleFileMessageDownloadToRequested(const QModelIndex &index,
+                                              const QString &targetPath);
+    /**
+     * @brief 打开指定文件消息已经下载好的本地文件。
+     * @param index 当前命中的文件消息索引。
+     */
+    void handleFileMessageOpenRequested(const QModelIndex &index);
+    /**
+     * @brief 打开指定文件消息的本地文件所在目录。
+     * @param index 当前命中的文件消息索引。
+     */
+    void handleFileMessageOpenFolderRequested(const QModelIndex &index);
+
+    /**
+     * @brief 切换输入区表情面板的显示状态。
+     */
+    void toggleEmojiPicker();
+
+    /**
+     * @brief 确保输入区表情面板已经创建完成。
+     */
+    void ensureEmojiPickerCreated();
+
+    /**
+     * @brief 将一个 emoji 插入到输入框当前光标位置。
+     * @param emoji 当前用户选中的 emoji 文本。
+     */
+    void insertEmojiIntoEditor(const QString &emoji);
 
     /**
      * @brief 从好友详情页发起或复用一对一私聊会话。
@@ -260,6 +310,14 @@ class ChatWindow : public QWidget
      * @param message 需要展示的说明文本。
      */
     void showSessionPlaceholder(const QString &message);
+    /**
+     * @brief 触发一条文件消息的下载动作。
+     * @param index 当前命中的文件消息索引。
+     * @param targetPath 可选自定义保存路径；为空时使用默认下载目录。
+     * @return true 表示下载流程已经启动或本地复制已完成。
+     */
+    bool requestFileMessageDownload(const QModelIndex &index,
+                                    const QString &targetPath = QString());
 
     // 当前左侧导航选中的主模式，决定中间栏和右侧内容区切到哪一页。
     SidebarSection m_currentSection{SidebarSection::kMessages};
@@ -319,9 +377,11 @@ class ChatWindow : public QWidget
     QHash<QString, QPixmap> m_conversationAvatarCache;
     // 聊天输入框，负责承载当前待发送的文本内容。
     QTextEdit *m_messageEditor = nullptr;
-    // 输入区“表情”按钮；当前属于占位入口，尚未接真实表情面板。
+    // 输入区“表情”按钮；点击后会弹出常用 emoji 面板。
     QPushButton *m_messageEmojiButton = nullptr;
-    // 输入区“图片”按钮：选择本地图片后会走真实上传与发送链路。
+    // 输入区 emoji 面板，当前使用轻量 QMenu 弹层承载 emoji 网格。
+    QMenu *m_messageEmojiMenu = nullptr;
+    // 输入区“附件”按钮：会根据本地文件类型自动走图片链路或普通文件链路。
     QPushButton *m_messageFileButton = nullptr;
     // 输入区“发送”按钮，把当前输入框文本发到当前会话。
     QPushButton *m_messageSendButton = nullptr;

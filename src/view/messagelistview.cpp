@@ -6,12 +6,16 @@
 #include <QAbstractItemModel>
 #include <QAbstractItemView>
 #include <QClipboard>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QShortcut>
+#include <QStandardPaths>
 #include <QStyleOptionViewItem>
 
 // MessageListView 是消息区域的交互外壳：
@@ -66,6 +70,7 @@ void MessageListView::setMessageModel(QAbstractItemModel *model)
     m_dragSelecting = false;
     m_dragIndex = QPersistentModelIndex();
     m_dragAnchor = -1;
+    m_pressedFileCardIndex = QPersistentModelIndex();
     resetHoverCursor();
     QListView::setModel(model);
 }
@@ -140,6 +145,7 @@ void MessageListView::mousePressEvent(QMouseEvent *event)
         m_dragSelecting = false;
         m_dragIndex = QPersistentModelIndex();
         m_dragAnchor = -1;
+        m_pressedFileCardIndex = QPersistentModelIndex();
         QListView::mousePressEvent(event);
         return;
     }
@@ -156,9 +162,22 @@ void MessageListView::mousePressEvent(QMouseEvent *event)
     option.rect = visualRect(index);
     option.widget = this;
 
+    if (delegate->fileCardContains(option, index, event->pos())) {
+        // 文件卡片是“点击打开 / 下载”的交互区，不进入文本选择态。
+        clearSelectedText();
+        m_dragSelecting = false;
+        m_dragIndex = QPersistentModelIndex();
+        m_dragAnchor = -1;
+        m_pressedFileCardIndex = QPersistentModelIndex(index);
+        viewport()->setCursor(Qt::PointingHandCursor);
+        event->accept();
+        return;
+    }
+
     const int cursorPos = delegate->textPositionAt(option, index, event->pos(), false);
     if (cursorPos < 0) {
         // 命中的是气泡非正文区域（如作者/时间/留白）：不进入拖拽选区。
+        m_pressedFileCardIndex = QPersistentModelIndex();
         resetHoverCursor();
         clearSelectedText();
         QListView::mousePressEvent(event);
@@ -169,6 +188,7 @@ void MessageListView::mousePressEvent(QMouseEvent *event)
     m_dragSelecting = true;
     m_dragIndex = QPersistentModelIndex(index);
     m_dragAnchor = cursorPos;
+    m_pressedFileCardIndex = QPersistentModelIndex();
     delegate->setTextSelection(index, cursorPos, cursorPos);
     viewport()->update(visualRect(index));
     viewport()->setCursor(Qt::IBeamCursor);
@@ -194,6 +214,7 @@ void MessageListView::mouseDoubleClickEvent(QMouseEvent *event)
         m_dragSelecting = false;
         m_dragIndex = QPersistentModelIndex();
         m_dragAnchor = -1;
+        m_pressedFileCardIndex = QPersistentModelIndex();
         QListView::mouseDoubleClickEvent(event);
         return;
     }
@@ -208,6 +229,16 @@ void MessageListView::mouseDoubleClickEvent(QMouseEvent *event)
     initViewItemOption(&option);
     option.rect = visualRect(index);
     option.widget = this;
+
+    if (delegate->fileCardContains(option, index, event->pos())) {
+        m_dragSelecting = false;
+        m_dragIndex = QPersistentModelIndex();
+        m_dragAnchor = -1;
+        m_pressedFileCardIndex = QPersistentModelIndex();
+        emit fileMessageActivated(index);
+        event->accept();
+        return;
+    }
 
     const int cursorPos = delegate->textPositionAt(option, index, event->pos(), false);
     if (cursorPos < 0) {
@@ -233,6 +264,14 @@ void MessageListView::mouseDoubleClickEvent(QMouseEvent *event)
 
 void MessageListView::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_pressedFileCardIndex.isValid() &&
+        (event->buttons() & Qt::LeftButton))
+    {
+        updateHoverCursor(event->pos());
+        event->accept();
+        return;
+    }
+
     if (!m_dragSelecting || !(event->buttons() & Qt::LeftButton)) {
         // 非拖拽态：仅维护 hover 光标，不改变选区。
         updateHoverCursor(event->pos());
@@ -268,6 +307,29 @@ void MessageListView::mouseMoveEvent(QMouseEvent *event)
 
 void MessageListView::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (event->button() == Qt::LeftButton && m_pressedFileCardIndex.isValid()) {
+        MessageDelegate *delegate = messageDelegate();
+        const QModelIndex index(m_pressedFileCardIndex);
+        bool shouldActivate = false;
+        if (delegate && index.isValid()) {
+            QStyleOptionViewItem option;
+            initViewItemOption(&option);
+            option.rect = visualRect(index);
+            option.widget = this;
+            shouldActivate = delegate->fileCardContains(option,
+                                                        index,
+                                                        event->pos());
+        }
+
+        m_pressedFileCardIndex = QPersistentModelIndex();
+        updateHoverCursor(event->pos());
+        if (shouldActivate) {
+            emit fileMessageActivated(index);
+            event->accept();
+            return;
+        }
+    }
+
     if (event->button() != Qt::LeftButton || !m_dragSelecting) {
         // 非“左键释放拖拽”场景保持默认行为。
         QListView::mouseReleaseEvent(event);
@@ -313,13 +375,83 @@ void MessageListView::showMessageContextMenu(const QPoint &pos)
 
     setCurrentIndex(index);
     QMenu menu(this);
-    // 仅当“右键所在行 == 当前文本选区所在行”时显示“复制选中文本”，
-    // 避免用户右键其它消息时误以为会复制该行子串。
+    QAction *copyAction = nullptr;
+    QAction *downloadAction = nullptr;
+    QAction *downloadToAction = nullptr;
+    QAction *openFolderAction = nullptr;
+    QAction *openFileAction = nullptr;
+
     const bool hasSelectedText = hasSelectedTextOnIndex(index);
-    QAction *copyAction = menu.addAction(hasSelectedText ? QStringLiteral("复制选中文本")
-                                                          : QStringLiteral("复制消息"));
+    if (isFileMessageIndex(index))
+    {
+        const bool hasLocalFile = hasDownloadedLocalFile(index);
+        const MessageTransferState transferState = static_cast<MessageTransferState>(
+            index.data(MessageModel::TransferStateRole).toInt());
+        const bool transferBusy =
+            transferState == MessageTransferState::Uploading ||
+            transferState == MessageTransferState::Sending ||
+            transferState == MessageTransferState::Downloading;
+
+        downloadAction = menu.addAction(hasLocalFile
+                                            ? QStringLiteral("重新下载到默认位置")
+                                            : QStringLiteral("下载到默认位置"));
+        downloadAction->setEnabled(!transferBusy);
+        downloadToAction = menu.addAction(QStringLiteral("下载到..."));
+        downloadToAction->setEnabled(!transferBusy);
+        menu.addSeparator();
+        openFolderAction = menu.addAction(QStringLiteral("打开所在文件夹"));
+        openFolderAction->setEnabled(hasLocalFile);
+        openFileAction = menu.addAction(QStringLiteral("打开文件"));
+        openFileAction->setEnabled(hasLocalFile);
+
+        if (hasSelectedText || !index.data(MessageModel::TextRole).toString().trimmed().isEmpty())
+        {
+            menu.addSeparator();
+            copyAction = menu.addAction(
+                hasSelectedText ? QStringLiteral("复制选中文本")
+                                : QStringLiteral("复制附言"));
+        }
+    }
+    else
+    {
+        // 仅当“右键所在行 == 当前文本选区所在行”时显示“复制选中文本”，
+        // 避免用户右键其它消息时误以为会复制该行子串。
+        copyAction = menu.addAction(hasSelectedText ? QStringLiteral("复制选中文本")
+                                                    : QStringLiteral("复制消息"));
+    }
 
     const QAction *chosen = menu.exec(viewport()->mapToGlobal(pos));
+    if (!chosen) {
+        return;
+    }
+
+    if (chosen == downloadAction) {
+        emit fileMessageDownloadRequested(index);
+        return;
+    }
+
+    if (chosen == downloadToAction) {
+        const QString suggestedPath = suggestedDownloadPath(index);
+        const QString targetPath = QFileDialog::getSaveFileName(
+            this,
+            QStringLiteral("选择文件下载位置"),
+            suggestedPath);
+        if (!targetPath.trimmed().isEmpty()) {
+            emit fileMessageDownloadToRequested(index, targetPath);
+        }
+        return;
+    }
+
+    if (chosen == openFolderAction) {
+        emit fileMessageOpenFolderRequested(index);
+        return;
+    }
+
+    if (chosen == openFileAction) {
+        emit fileMessageOpenRequested(index);
+        return;
+    }
+
     if (chosen != copyAction) {
         return;
     }
@@ -387,6 +519,11 @@ void MessageListView::updateHoverCursor(const QPoint &viewPos)
     option.rect = visualRect(index);
     option.widget = this;
 
+    if (delegate->fileCardContains(option, index, viewPos)) {
+        viewport()->setCursor(Qt::PointingHandCursor);
+        return;
+    }
+
     const int cursorPos = delegate->textPositionAt(option, index, viewPos, false);
     if (cursorPos >= 0) {
         // 仅正文区域显示 IBeam；作者/时间/气泡留白保持默认箭头。
@@ -394,6 +531,58 @@ void MessageListView::updateHoverCursor(const QPoint &viewPos)
     } else {
         resetHoverCursor();
     }
+}
+
+bool MessageListView::isFileMessageIndex(const QModelIndex &index) const
+{
+    if (!index.isValid()) {
+        return false;
+    }
+
+    return index.data(MessageModel::MessageTypeRole).toInt() ==
+           static_cast<int>(MessageType::File);
+}
+
+bool MessageListView::hasDownloadedLocalFile(const QModelIndex &index) const
+{
+    if (!isFileMessageIndex(index)) {
+        return false;
+    }
+
+    const QString localPath =
+        index.data(MessageModel::FileLocalPathRole).toString().trimmed();
+    return !localPath.isEmpty() && QFileInfo::exists(localPath);
+}
+
+QString MessageListView::suggestedDownloadPath(const QModelIndex &index) const
+{
+    if (!isFileMessageIndex(index)) {
+        return QString();
+    }
+
+    const QString localPath =
+        index.data(MessageModel::FileLocalPathRole).toString().trimmed();
+    if (!localPath.isEmpty()) {
+        return QFileInfo(localPath).absoluteFilePath();
+    }
+
+    QString fileName =
+        index.data(MessageModel::FileNameRole).toString().trimmed();
+    if (fileName.isEmpty()) {
+        fileName = QStringLiteral("attachment.bin");
+    }
+
+    QString downloadRoot =
+        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (downloadRoot.trimmed().isEmpty()) {
+        downloadRoot =
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    }
+    if (downloadRoot.trimmed().isEmpty()) {
+        return fileName;
+    }
+
+    return QFileInfo(QDir(downloadRoot).filePath(fileName)).absoluteFilePath();
 }
 
 void MessageListView::resetHoverCursor()

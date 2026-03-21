@@ -147,3 +147,43 @@ bool MessageModelRegistry::updateImagePayload(const QString &conversationId,
 
     return false;
 }
+
+bool MessageModelRegistry::updateFilePayload(const QString &conversationId,
+                                             const MessageItem &identity,
+                                             const QString &localPath,
+                                             const QString &remoteUrl,
+                                             const QString &fileName,
+                                             const QString &mimeType,
+                                             qint64 sizeBytes,
+                                             const QString &attachmentId)
+{
+    if (MessageModel *target = model(conversationId))
+    {
+        return target->updateFilePayload(identity,
+                                         localPath,
+                                         remoteUrl,
+                                         fileName,
+                                         mimeType,
+                                         sizeBytes,
+                                         attachmentId);
+    }
+
+    return false;
+}
+
+bool MessageModelRegistry::updateTransferState(const QString &conversationId,
+                                               const MessageItem &identity,
+                                               MessageTransferState transferState,
+                                               int transferProgress,
+                                               const QString &statusText)
+{
+    if (MessageModel *target = model(conversationId))
+    {
+        return target->updateTransferState(identity,
+                                           transferState,
+                                           transferProgress,
+                                           statusText);
+    }
+
+    return false;
+}

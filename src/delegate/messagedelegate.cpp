@@ -9,6 +9,7 @@
 #include <QFontMetrics>
 #include <QImageReader>
 #include <QListView>
+#include <QLocale>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
@@ -37,6 +38,12 @@ constexpr int kImageMaxWidth = 280;
 constexpr int kImageMaxHeight = 220;
 constexpr int kPlaceholderImageWidth = 220;
 constexpr int kPlaceholderImageHeight = 150;
+constexpr int kFileCardMinWidth = 250;
+constexpr int kFileIconSize = 42;
+constexpr int kFileCardPadding = 12;
+constexpr int kFileCardInnerSpacing = 10;
+constexpr int kFileCardTextSpacing = 4;
+constexpr int kFileProgressHeight = 6;
 
 int maxBubbleWidthForViewportInternal(int viewportWidth)
 {
@@ -238,14 +245,123 @@ qreal layoutTextHeight(const QString &text, const QFont &font, int textWidth)
     return qMax<qreal>(metrics.lineSpacing(), y);
 }
 
+QString formattedFileSize(const qint64 sizeBytes)
+{
+    if (sizeBytes < 0)
+    {
+        return QStringLiteral("大小未知");
+    }
+
+    return QLocale().formattedDataSize(sizeBytes);
+}
+
+bool hasUsableLocalFile(const QModelIndex &index)
+{
+    const QString localPath =
+        index.data(MessageModel::FileLocalPathRole).toString().trimmed();
+    return !localPath.isEmpty() && QFileInfo::exists(localPath);
+}
+
+QString fileBadgeText(const QString &fileName)
+{
+    const QString suffix =
+        QFileInfo(fileName.trimmed()).suffix().trimmed().toUpper();
+    if (!suffix.isEmpty())
+    {
+        return suffix.left(4);
+    }
+
+    return QStringLiteral("FILE");
+}
+
+QColor fileBadgeBackgroundColor(const QString &fileName)
+{
+    const QString suffix =
+        QFileInfo(fileName.trimmed()).suffix().trimmed().toLower();
+    if (suffix == QStringLiteral("pdf"))
+    {
+        return QColor(QStringLiteral("#d94c4c"));
+    }
+    if (suffix == QStringLiteral("zip") || suffix == QStringLiteral("rar") ||
+        suffix == QStringLiteral("7z"))
+    {
+        return QColor(QStringLiteral("#ff9b47"));
+    }
+    if (suffix == QStringLiteral("doc") || suffix == QStringLiteral("docx"))
+    {
+        return QColor(QStringLiteral("#4b7bec"));
+    }
+    if (suffix == QStringLiteral("xls") || suffix == QStringLiteral("xlsx"))
+    {
+        return QColor(QStringLiteral("#1d976c"));
+    }
+    if (suffix == QStringLiteral("ppt") || suffix == QStringLiteral("pptx"))
+    {
+        return QColor(QStringLiteral("#ff6b57"));
+    }
+    if (suffix == QStringLiteral("txt") || suffix == QStringLiteral("md"))
+    {
+        return QColor(QStringLiteral("#5f6b7a"));
+    }
+
+    return QColor(QStringLiteral("#4f74c8"));
+}
+
+QString fileStatusText(const QModelIndex &index,
+                       const MessageTransferState transferState,
+                       const QString &transferStatusText)
+{
+    const QString trimmedStatusText = transferStatusText.trimmed();
+    if (!trimmedStatusText.isEmpty())
+    {
+        return trimmedStatusText;
+    }
+
+    switch (transferState)
+    {
+    case MessageTransferState::Uploading:
+        return QStringLiteral("上传中");
+    case MessageTransferState::Sending:
+        return QStringLiteral("发送中");
+    case MessageTransferState::Downloading:
+        return QStringLiteral("下载中");
+    case MessageTransferState::Failed:
+        return QStringLiteral("文件传输失败");
+    case MessageTransferState::None:
+    default:
+        break;
+    }
+
+    if (hasUsableLocalFile(index))
+    {
+        return QStringLiteral("已下载，可打开");
+    }
+
+    const QString remoteUrl =
+        index.data(MessageModel::FileRemoteUrlRole).toString().trimmed();
+    if (!remoteUrl.isEmpty())
+    {
+        return QStringLiteral("点击下载");
+    }
+
+    return QStringLiteral("文件不可用");
+}
+
 struct BubbleLayout {
     QRect bubbleRect;
     QRect authorRect;
     QRect messageRect;
     QRect imageRect;
+    QRect fileCardRect;
+    QRect fileBadgeRect;
+    QRect fileTitleRect;
+    QRect fileMetaRect;
+    QRect fileStatusRect;
+    QRect fileProgressTrackRect;
     QRect timeRect;
     int edgeAlign = Qt::AlignLeft;
     bool hasImage = false;
+    bool hasFileCard = false;
 };
 
 BubbleLayout buildBubbleLayout(const QStyleOptionViewItem &option,
@@ -340,6 +456,143 @@ BubbleLayout buildBubbleLayout(const QStyleOptionViewItem &option,
         layout.timeRect = timeRect;
         layout.edgeAlign = edgeAlign;
         layout.hasImage = true;
+        return layout;
+    }
+
+    if (messageType == MessageType::File)
+    {
+        const MessageTransferState transferState = transferStateFromIndex(index);
+        const int transferProgress =
+            index.data(MessageModel::TransferProgressRole).toInt();
+        const QString fileName =
+            index.data(MessageModel::FileNameRole).toString().trimmed();
+        const QString statusText = fileStatusText(
+            index,
+            transferState,
+            index.data(MessageModel::TransferStatusTextRole).toString());
+        const QString metaText = formattedFileSize(
+            index.data(MessageModel::FileSizeBytesRole).toLongLong());
+        const bool showProgress =
+            (transferState == MessageTransferState::Uploading ||
+             transferState == MessageTransferState::Sending ||
+             transferState == MessageTransferState::Downloading) &&
+            transferProgress >= 0;
+
+        const int maxBubbleWidth =
+            maxBubbleWidthForViewportInternal(rowRect.width());
+        const int contentWidth =
+            qMax(kTextMinLayoutWidth, maxBubbleWidth - (kBubblePaddingX * 2));
+        const int fileTextWidth =
+            qMax(80,
+                 contentWidth - (kFileCardPadding * 2) - kFileIconSize -
+                     kFileCardInnerSpacing);
+        const int titleWidth =
+            qMin(fileTextWidth,
+                 messageMetrics.horizontalAdvance(
+                     fileName.isEmpty() ? QStringLiteral("未命名文件")
+                                        : fileName));
+        const int metaWidth =
+            qMin(fileTextWidth, timeMetrics.horizontalAdvance(metaText));
+        const int statusWidth =
+            qMin(fileTextWidth, timeMetrics.horizontalAdvance(statusText));
+        const int fileCardWidth = qMin(
+            contentWidth,
+            qMax(kFileCardMinWidth,
+                 (kFileCardPadding * 2) + kFileIconSize +
+                     kFileCardInnerSpacing +
+                     qMax(titleWidth, qMax(metaWidth, statusWidth))));
+
+        const int statusLineHeight = timeMetrics.height();
+        const int progressSectionHeight =
+            showProgress ? (kFileCardTextSpacing + kFileProgressHeight) : 0;
+        const int cardContentHeight =
+            messageMetrics.height() + kFileCardTextSpacing +
+            timeMetrics.height() + kFileCardTextSpacing + statusLineHeight +
+            progressSectionHeight;
+        const int fileCardHeight =
+            (kFileCardPadding * 2) + qMax(kFileIconSize, cardContentHeight);
+
+        const int captionWidth =
+            qMax(kTextMinLayoutWidth, fileCardWidth - (kBubblePaddingX * 2));
+        const int captionHeight =
+            text.trimmed().isEmpty()
+                ? 0
+                : qCeil(layoutTextHeight(text, mFont, captionWidth));
+        const int bubbleWidth = fileCardWidth + (kBubblePaddingX * 2);
+        const int bubbleHeight =
+            (kBubblePaddingY * 2) + authorMetrics.height() + kBubbleSpacing +
+            fileCardHeight +
+            (captionHeight > 0 ? kBubbleSpacing + captionHeight : 0) +
+            kBubbleSpacing + timeMetrics.height();
+
+        const int bubbleLeft =
+            fromSelf ? (rowRect.right() - bubbleWidth + 1) : rowRect.left();
+        const QRect bubbleRect(bubbleLeft, rowRect.top(), bubbleWidth,
+                               bubbleHeight);
+        const int contentLeft = bubbleRect.left() + kBubblePaddingX;
+        const int contentTop = bubbleRect.top() + kBubblePaddingY;
+        const int edgeAlign = fromSelf ? Qt::AlignRight : Qt::AlignLeft;
+        const QRect authorRect(contentLeft,
+                               contentTop,
+                               fileCardWidth,
+                               authorMetrics.height());
+        const QRect fileCardRect(contentLeft,
+                                 authorRect.bottom() + 1 + kBubbleSpacing,
+                                 fileCardWidth,
+                                 fileCardHeight);
+        const QRect fileBadgeRect(fileCardRect.left() + kFileCardPadding,
+                                  fileCardRect.top() + kFileCardPadding,
+                                  kFileIconSize,
+                                  kFileIconSize);
+        const int fileTextLeft =
+            fileBadgeRect.right() + 1 + kFileCardInnerSpacing;
+        const int fileTextWidthForRect =
+            fileCardRect.right() - kFileCardPadding - fileTextLeft + 1;
+        const QRect fileTitleRect(fileTextLeft,
+                                  fileCardRect.top() + kFileCardPadding,
+                                  fileTextWidthForRect,
+                                  messageMetrics.height());
+        const QRect fileMetaRect(fileTextLeft,
+                                 fileTitleRect.bottom() + 1 +
+                                     kFileCardTextSpacing,
+                                 fileTextWidthForRect,
+                                 timeMetrics.height());
+        const QRect fileStatusRect(fileTextLeft,
+                                   fileMetaRect.bottom() + 1 +
+                                       kFileCardTextSpacing,
+                                   fileTextWidthForRect,
+                                   statusLineHeight);
+        const QRect fileProgressTrackRect(
+            fileTextLeft,
+            fileStatusRect.bottom() + 1 + kFileCardTextSpacing,
+            fileTextWidthForRect,
+            showProgress ? kFileProgressHeight : 0);
+        const QRect captionRect(
+            contentLeft,
+            fileCardRect.bottom() + 1 +
+                (captionHeight > 0 ? kBubbleSpacing : 0),
+            fileCardWidth,
+            captionHeight);
+        const QRect timeRect(
+            contentLeft,
+            (captionHeight > 0 ? captionRect.bottom() : fileCardRect.bottom()) +
+                1 + kBubbleSpacing,
+            fileCardWidth,
+            timeMetrics.height());
+
+        BubbleLayout layout;
+        layout.bubbleRect = bubbleRect;
+        layout.authorRect = authorRect;
+        layout.fileCardRect = fileCardRect;
+        layout.fileBadgeRect = fileBadgeRect;
+        layout.fileTitleRect = fileTitleRect;
+        layout.fileMetaRect = fileMetaRect;
+        layout.fileStatusRect = fileStatusRect;
+        layout.fileProgressTrackRect = fileProgressTrackRect;
+        layout.messageRect = captionRect;
+        layout.timeRect = timeRect;
+        layout.edgeAlign = edgeAlign;
+        layout.hasFileCard = true;
         return layout;
     }
 
@@ -545,6 +798,24 @@ int MessageDelegate::textPositionAt(const QStyleOptionViewItem &option,
                                 clampToTextRect);
 }
 
+bool MessageDelegate::fileCardContains(const QStyleOptionViewItem &option,
+                                       const QModelIndex &index,
+                                       const QPoint &viewPos) const
+{
+    if (!index.isValid() || messageTypeFromIndex(index) != MessageType::File)
+    {
+        return false;
+    }
+
+    const QString author = index.data(MessageModel::AuthorRole).toString();
+    const QString text = messageBodyText(index);
+    const QString timeText = index.data(MessageModel::TimeRole).toString();
+    const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
+    const BubbleLayout layout =
+        buildBubbleLayout(option, index, author, text, timeText, fromSelf);
+    return layout.hasFileCard && layout.fileCardRect.contains(viewPos);
+}
+
 void MessageDelegate::setTextSelection(const QModelIndex &index, int anchor, int cursor)
 {
     if (!index.isValid()) {
@@ -592,7 +863,7 @@ QString MessageDelegate::selectedText(const QAbstractItemModel *model) const
         return QString();
     }
 
-    const QString text = fallbackText(QModelIndex(m_selectionIndex));
+    const QString text = messageBodyText(QModelIndex(m_selectionIndex));
     if (text.isEmpty()) {
         return QString();
     }
@@ -622,7 +893,7 @@ QSize MessageDelegate::sizeHint(const QStyleOptionViewItem &option, const QModel
     }
 
     const QString author = index.data(MessageModel::AuthorRole).toString();
-    const QString text = fallbackText(index);
+    const QString text = messageBodyText(index);
     const QString timeText = index.data(MessageModel::TimeRole).toString();
     const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
     QStyleOptionViewItem optionForLayout(option);
@@ -646,7 +917,6 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     const QString text = messageBodyText(index);
     const QString timeText = index.data(MessageModel::TimeRole).toString();
     const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
-    const MessageType messageType = messageTypeFromIndex(index);
     const MessageTransferState transferState = transferStateFromIndex(index);
     const int transferProgress =
         index.data(MessageModel::TransferProgressRole).toInt();
@@ -654,6 +924,10 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         index.data(MessageModel::TransferStatusTextRole).toString().trimmed();
     const QString imageLocalPath =
         index.data(MessageModel::ImageLocalPathRole).toString().trimmed();
+    const QString fileName =
+        index.data(MessageModel::FileNameRole).toString().trimmed();
+    const qint64 fileSizeBytes =
+        index.data(MessageModel::FileSizeBytesRole).toLongLong();
 
     const QFont aFont = authorFont(option.font);
     const QFont mFont = messageFont(option.font);
@@ -753,6 +1027,115 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
                               transferStatusText);
             painter->restore();
         }
+
+        if (!layout.messageRect.isEmpty() && !text.isEmpty())
+        {
+            int selectStart = 0;
+            int selectEnd = 0;
+            if (hasTextSelectionOnIndex(index) &&
+                normalizedSelection(m_selectionAnchor,
+                                    m_selectionCursor,
+                                    &selectStart,
+                                    &selectEnd))
+            {
+                drawTextSelectionBackground(
+                    painter, layout.messageRect, text, mFont, selectStart,
+                    selectEnd);
+            }
+
+            painter->setFont(mFont);
+            painter->setPen(QColor(QStringLiteral("#162740")));
+            painter->drawText(layout.messageRect,
+                              Qt::TextWordWrap | Qt::AlignLeft |
+                                  Qt::AlignTop,
+                              text);
+        }
+    }
+    else if (layout.hasFileCard)
+    {
+        const QString displayFileName =
+            fileName.isEmpty() ? QStringLiteral("未命名文件") : fileName;
+        const QString statusText =
+            fileStatusText(index, transferState, transferStatusText);
+        const QString metaText = formattedFileSize(fileSizeBytes);
+        const QColor cardBg = fromSelf ? QColor(QStringLiteral("#f2f8ff"))
+                                       : QColor(QStringLiteral("#f8fafc"));
+        const QColor cardBorder = fromSelf ? QColor(QStringLiteral("#c4daf7"))
+                                           : QColor(QStringLiteral("#d9e3f2"));
+
+        painter->save();
+        painter->setBrush(cardBg);
+        painter->setPen(QPen(cardBorder, 1));
+        painter->drawRoundedRect(layout.fileCardRect, 10, 10);
+
+        painter->setBrush(fileBadgeBackgroundColor(displayFileName));
+        painter->setPen(Qt::NoPen);
+        painter->drawRoundedRect(layout.fileBadgeRect, 10, 10);
+
+        QFont badgeFont = statusFont;
+        badgeFont.setPixelSize(11);
+        painter->setFont(badgeFont);
+        painter->setPen(QColor(QStringLiteral("#ffffff")));
+        painter->drawText(layout.fileBadgeRect.adjusted(2, 2, -2, -2),
+                          Qt::AlignCenter,
+                          fileBadgeText(displayFileName));
+
+        painter->setFont(mFont);
+        painter->setPen(QColor(QStringLiteral("#162740")));
+        painter->drawText(
+            layout.fileTitleRect,
+            Qt::AlignLeft | Qt::AlignVCenter,
+            QFontMetrics(mFont).elidedText(displayFileName,
+                                           Qt::ElideMiddle,
+                                           layout.fileTitleRect.width()));
+
+        painter->setFont(tFont);
+        painter->setPen(QColor(QStringLiteral("#70829c")));
+        painter->drawText(
+            layout.fileMetaRect,
+            Qt::AlignLeft | Qt::AlignVCenter,
+            QFontMetrics(tFont).elidedText(metaText,
+                                           Qt::ElideRight,
+                                           layout.fileMetaRect.width()));
+
+        QColor statusColor(QStringLiteral("#4f74c8"));
+        if (transferState == MessageTransferState::Failed)
+        {
+            statusColor = QColor(QStringLiteral("#d94c4c"));
+        }
+        else if (transferState == MessageTransferState::None &&
+                 hasUsableLocalFile(index))
+        {
+            statusColor = QColor(QStringLiteral("#1d976c"));
+        }
+
+        painter->setPen(statusColor);
+        painter->drawText(
+            layout.fileStatusRect,
+            Qt::AlignLeft | Qt::AlignVCenter,
+            QFontMetrics(tFont).elidedText(statusText,
+                                           Qt::ElideRight,
+                                           layout.fileStatusRect.width()));
+
+        if (layout.fileProgressTrackRect.height() > 0)
+        {
+            const int progressWidth = qBound(
+                0,
+                static_cast<int>(
+                    (layout.fileProgressTrackRect.width() * transferProgress) /
+                    100.0),
+                layout.fileProgressTrackRect.width());
+            const QRect fillRect(layout.fileProgressTrackRect.left(),
+                                 layout.fileProgressTrackRect.top(),
+                                 progressWidth,
+                                 layout.fileProgressTrackRect.height());
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(79, 116, 200, 56));
+            painter->drawRoundedRect(layout.fileProgressTrackRect, 3, 3);
+            painter->setBrush(QColor(QStringLiteral("#4f74c8")));
+            painter->drawRoundedRect(fillRect, 3, 3);
+        }
+        painter->restore();
 
         if (!layout.messageRect.isEmpty() && !text.isEmpty())
         {

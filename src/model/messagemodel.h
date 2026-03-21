@@ -18,11 +18,12 @@ enum class MessageType {
 
 // 消息传输状态。
 //
-// 当前主要服务于图片消息：
-// - 上传临时附件时显示 Uploading；
-// - HTTP 上传完成、等待 `message.send_image` ack/new 收敛时显示 Sending；
+// 当前统一服务于“带附件的消息 UI 传输态”：
+// - 图片 / 文件上传临时附件时显示 Uploading；
+// - HTTP 上传完成、等待 WS 业务确认时显示 Sending；
+// - 文件消息主动下载到本地时显示 Downloading；
 // - 任一阶段失败时显示 Failed；
-// - 已经成为正式消息后回到 None。
+// - 已经进入稳定态后回到 None。
 enum class MessageTransferState {
     // 当前没有额外传输态，视为正式稳定消息。
     None = 0,
@@ -30,7 +31,9 @@ enum class MessageTransferState {
     Uploading,
     // 上传已完成，正在等待 WS 业务确认或正式广播。
     Sending,
-    // 上传或发送流程失败。
+    // 正在把正式附件下载到本地文件系统。
+    Downloading,
+    // 上传、下载或发送流程失败。
     Failed
 };
 
@@ -47,12 +50,16 @@ struct MessageImagePayload {
 
 // 文件消息扩展字段。
 struct MessageFilePayload {
+    // 正式附件 ID；若当前消息还没带出该字段，可为空。
+    QString attachmentId;
     // 文件显示名（例如 report.pdf）。
     QString fileName;
     // 本地路径（可为空）。
     QString localPath;
     // 服务端 URL（可为空）。
     QString remoteUrl;
+    // 文件 MIME 类型（例如 application/pdf）；未知时为空。
+    QString mimeType;
     // 文件大小（字节），未知时为 -1。
     qint64 sizeBytes = -1;
 };
@@ -119,9 +126,11 @@ public:
         ImageRemoteUrlRole,
         ImageWidthRole,
         ImageHeightRole,
+        FileAttachmentIdRole,
         FileNameRole,
         FileLocalPathRole,
         FileRemoteUrlRole,
+        FileMimeTypeRole,
         FileSizeBytesRole,
         TransferStateRole,
         TransferProgressRole,
@@ -239,6 +248,49 @@ public:
                             const QString &localPath,
                             int width = -1,
                             int height = -1);
+    /**
+     * @brief 只更新某条文件消息的本地路径 / 远端地址 / 文件元数据。
+     *
+     * 这个接口用于文件消息已经进入模型后，再局部回填以下场景：
+     * 1. 用户把正式附件下载到了本地；
+     * 2. 某次重试后拿到了更完整的文件名、MIME 或大小信息；
+     * 3. 后续如果补“文件发送中占位消息”，也可以继续复用同一条局部刷新路径。
+     *
+     * 它不会覆盖作者、正文、时间等通用展示字段，只更新文件预览真正依赖的
+     * `localPath / remoteUrl / fileName / mimeType / sizeBytes / attachmentId`。
+     *
+     * @param identity 用于定位目标消息的身份键；通常带 `messageId / clientMessageId / seq` 之一即可。
+     * @param localPath 已下载到本地的文件路径；为空时不更新。
+     * @param remoteUrl 远端下载地址；为空时不更新。
+     * @param fileName 文件展示名；为空时不更新。
+     * @param mimeType 文件 MIME 类型；为空时不更新。
+     * @param sizeBytes 文件大小；小于 0 时表示不更新。
+     * @param attachmentId 正式附件 ID；为空时不更新。
+     * @return true 表示命中并刷新了对应文件消息；false 表示未命中或没有实际变化。
+     */
+    bool updateFilePayload(const MessageItem &identity,
+                           const QString &localPath = QString(),
+                           const QString &remoteUrl = QString(),
+                           const QString &fileName = QString(),
+                           const QString &mimeType = QString(),
+                           qint64 sizeBytes = -1,
+                           const QString &attachmentId = QString());
+    /**
+     * @brief 只更新某条消息的传输状态字段。
+     *
+     * 这个接口把“附件消息的动态状态”单独收口出来，避免每次下载 / 上传进度变更时
+     * 都重新构造整条 `MessageItem` 再走一遍完整 upsert。
+     *
+     * @param identity 用于定位目标消息的身份键。
+     * @param transferState 新的传输状态。
+     * @param transferProgress 新的传输进度百分比；未知时可传 -1。
+     * @param statusText 直接展示给 delegate 的状态文案。
+     * @return true 表示命中并产生了实际变化；false 表示未命中或状态未变化。
+     */
+    bool updateTransferState(const MessageItem &identity,
+                             MessageTransferState transferState,
+                             int transferProgress,
+                             const QString &statusText);
 
 private:
     // 按“服务端 message_id -> 本地 client_message_id -> seq”的优先级查找同一条消息，

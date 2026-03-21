@@ -12,9 +12,11 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QLocale>
+#include <QMimeDatabase>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QUuid>
@@ -169,10 +171,10 @@ QVector<MessageItem> toMessageItems(
         item.timeText = messageTimeText(message.createdAtMs);
         item.fromSelf = message.senderId == currentUserId;
 
-        if (message.messageType == QStringLiteral("image")) {
-            item.messageType = MessageType::Image;
-            item.text =
-                message.content.value(QStringLiteral("caption")).toString();
+    if (message.messageType == QStringLiteral("image")) {
+        item.messageType = MessageType::Image;
+        item.text =
+            message.content.value(QStringLiteral("caption")).toString();
             item.image.width =
                 optionalIntFromJson(message.content,
                                     QStringLiteral("width"));
@@ -189,12 +191,32 @@ QVector<MessageItem> toMessageItems(
             }
         } else if (message.messageType == QStringLiteral("file")) {
             item.messageType = MessageType::File;
+            item.text =
+                message.content.value(QStringLiteral("caption")).toString();
+            item.file.attachmentId =
+                message.content.value(QStringLiteral("attachment_id"))
+                    .toString();
             item.file.fileName =
                 message.content.value(QStringLiteral("file_name")).toString();
             item.file.remoteUrl =
                 message.content.value(QStringLiteral("url")).toString();
+            if (item.file.remoteUrl.trimmed().isEmpty())
+            {
+                item.file.remoteUrl =
+                    message.content.value(QStringLiteral("download_url"))
+                        .toString();
+            }
+            item.file.mimeType =
+                message.content.value(QStringLiteral("mime_type")).toString();
             item.file.sizeBytes = static_cast<qint64>(
-                message.content.value(QStringLiteral("size")).toDouble(-1));
+                message.content.value(QStringLiteral("size_bytes"))
+                    .toDouble(-1));
+            if (item.file.sizeBytes < 0)
+            {
+                item.file.sizeBytes = static_cast<qint64>(
+                    message.content.value(QStringLiteral("size"))
+                        .toDouble(-1));
+            }
         } else {
             item.messageType = MessageType::Text;
             item.text = message.content.value(QStringLiteral("text")).toString();
@@ -256,6 +278,10 @@ ConversationManager::ConversationManager(QObject *parent)
             &chatclient::api::FileApiClient::uploadProgressChanged,
             this,
             &ConversationManager::handleAttachmentUploadProgress);
+    connect(m_fileApiClient,
+            &chatclient::api::FileApiClient::downloadProgressChanged,
+            this,
+            &ConversationManager::handleAttachmentDownloadProgress);
 }
 
 void ConversationManager::setAuthService(
@@ -713,6 +739,109 @@ void ConversationManager::removePendingImageMessage(
     }
 }
 
+MessageItem ConversationManager::buildPendingFileMessageItem(
+    const PendingFileMessage &pending) const
+{
+    // 文件发送中的本地占位消息同样通过 MessageItem 投影，
+    // 这样 delegate 可以直接复用统一的 file 卡片绘制与进度展示逻辑。
+    MessageItem item;
+    item.conversationId = pending.conversationId;
+    item.messageId = pending.messageId;
+    item.clientMessageId = pending.clientMessageId;
+    item.seq = pending.seq;
+    item.author = QStringLiteral("我");
+    item.text = pending.caption;
+    item.timeText = messageTimeText(
+        pending.createdAtMs > 0 ? pending.createdAtMs : pending.sentAtMs);
+    item.fromSelf = true;
+    item.messageType = MessageType::File;
+    item.file.fileName = pending.fileName;
+    item.file.localPath = pending.localPath;
+    item.file.mimeType = pending.mimeType;
+    item.file.sizeBytes = pending.sizeBytes;
+    item.transferState = pending.transferState;
+    item.transferProgress = pending.transferProgress;
+    item.transferStatusText = pending.transferStatusText;
+    return item;
+}
+
+void ConversationManager::upsertPendingFileMessage(
+    const PendingFileMessage &pending)
+{
+    m_messageModelRegistry->upsertMessageItem(
+        pending.conversationId,
+        buildPendingFileMessageItem(pending));
+}
+
+void ConversationManager::markPendingFileMessageFailed(
+    const QString &clientMessageId,
+    const QString &statusText)
+{
+    auto it =
+        m_pendingFileMessagesByClientMessageId.find(clientMessageId.trimmed());
+    if (it == m_pendingFileMessagesByClientMessageId.end())
+    {
+        return;
+    }
+
+    it->transferState = MessageTransferState::Failed;
+    it->transferProgress = -1;
+    it->transferStatusText =
+        statusText.trimmed().isEmpty() ? QStringLiteral("文件发送失败")
+                                       : statusText.trimmed();
+    upsertPendingFileMessage(*it);
+
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    if (m_conversationListModel->conversationById(it->conversationId,
+                                                  &conversation))
+    {
+        conversation.lastMessagePreview = QStringLiteral("[文件发送失败]");
+        conversation.hasLastMessageAtMs = true;
+        conversation.lastMessageAtMs = it->sentAtMs;
+        conversation.unreadCount = 0;
+        conversation.lastReadSeq =
+            qMax(conversation.lastReadSeq, conversation.lastMessageSeq);
+        m_conversationListModel->upsertConversation(conversation);
+        emit conversationListUpdated();
+    }
+
+    removePendingFileMessage(it.key());
+}
+
+void ConversationManager::removePendingFileMessage(
+    const QString &clientMessageId)
+{
+    const QString trimmedClientMessageId = clientMessageId.trimmed();
+    if (trimmedClientMessageId.isEmpty())
+    {
+        return;
+    }
+
+    m_pendingFileMessagesByClientMessageId.remove(trimmedClientMessageId);
+
+    for (auto it = m_pendingFileClientIdsByUploadRequestId.begin();
+         it != m_pendingFileClientIdsByUploadRequestId.end();)
+    {
+        if (it.value() == trimmedClientMessageId)
+        {
+            it = m_pendingFileClientIdsByUploadRequestId.erase(it);
+            continue;
+        }
+        ++it;
+    }
+
+    for (auto it = m_pendingFileClientIdsByWsRequestId.begin();
+         it != m_pendingFileClientIdsByWsRequestId.end();)
+    {
+        if (it.value() == trimmedClientMessageId)
+        {
+            it = m_pendingFileClientIdsByWsRequestId.erase(it);
+            continue;
+        }
+        ++it;
+    }
+}
+
 bool ConversationManager::sendImageMessage(const QString &conversationId,
                                            const QString &localPath,
                                            const QString &caption)
@@ -912,6 +1041,503 @@ bool ConversationManager::sendImageMessage(const QString &conversationId,
     return true;
 }
 
+bool ConversationManager::sendFileMessage(const QString &conversationId,
+                                          const QString &localPath,
+                                          const QString &caption)
+{
+    // 文件发送链路与图片一致：
+    // 1. 本地先插入“上传中”占位消息；
+    // 2. 走 HTTP 临时附件上传；
+    // 3. 上传成功后发 `message.send_file`；
+    // 4. 再由 ack/new 收敛成正式文件消息。
+    if (!m_authService || !m_authService->hasActiveSession() || !m_fileApiClient)
+    {
+        return false;
+    }
+
+    if (!m_chatWsClient || !m_chatWsClient->isAuthenticated())
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "拒绝发送文件消息，实时通道当前不可用，conversation_id="
+            << conversationId;
+        return false;
+    }
+
+    const QString trimmedConversationId = conversationId.trimmed();
+    const QString trimmedLocalPath = localPath.trimmed();
+    const QString trimmedCaption = caption.trimmed();
+    if (trimmedConversationId.isEmpty() || trimmedLocalPath.isEmpty())
+    {
+        return false;
+    }
+
+    const QFileInfo fileInfo(trimmedLocalPath);
+    if (!fileInfo.exists() || !fileInfo.isFile())
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "文件消息发送失败，本地文件不存在，conversation_id="
+            << trimmedConversationId
+            << " local_path="
+            << trimmedLocalPath;
+        return false;
+    }
+
+    QFile file(trimmedLocalPath);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "文件消息发送失败，无法读取本地文件，conversation_id="
+            << trimmedConversationId
+            << " local_path="
+            << trimmedLocalPath;
+        return false;
+    }
+    file.close();
+
+    const QMimeDatabase mimeDatabase;
+    const QString mimeType =
+        mimeDatabase.mimeTypeForFile(fileInfo).name().trimmed();
+
+    PendingFileMessage pending;
+    pending.conversationId = trimmedConversationId;
+    pending.clientMessageId =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    pending.localPath = trimmedLocalPath;
+    pending.fileName = fileInfo.fileName();
+    pending.mimeType = mimeType;
+    pending.sizeBytes = fileInfo.size();
+    pending.caption = trimmedCaption;
+    pending.sentAtMs = QDateTime::currentMSecsSinceEpoch();
+    pending.transferState = MessageTransferState::Uploading;
+    pending.transferProgress = 0;
+    pending.transferStatusText = QStringLiteral("上传中 0%");
+
+    m_pendingFileMessagesByClientMessageId.insert(pending.clientMessageId,
+                                                  pending);
+    upsertPendingFileMessage(pending);
+
+    ConversationRuntimeState &state = ensureState(trimmedConversationId);
+    state.initialized = true;
+
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    if (m_conversationListModel->conversationById(trimmedConversationId,
+                                                  &conversation))
+    {
+        conversation.lastMessagePreview = QStringLiteral("[文件上传中]");
+        conversation.hasLastMessageAtMs = true;
+        conversation.lastMessageAtMs = pending.sentAtMs;
+        conversation.unreadCount = 0;
+        conversation.lastReadSeq =
+            qMax(conversation.lastReadSeq, conversation.lastMessageSeq);
+        m_conversationListModel->upsertConversation(conversation);
+        emit conversationListUpdated();
+    }
+
+    const QString accessToken =
+        m_authService->currentSession().accessToken.trimmed();
+    const QString uploadRequestId = m_fileApiClient->uploadAttachment(
+        accessToken,
+        trimmedLocalPath,
+        [this, clientMessageId = pending.clientMessageId](
+            const chatclient::dto::file::UploadAttachmentResponseDto &response) {
+            m_pendingFileClientIdsByUploadRequestId.remove(
+                response.requestId.trimmed());
+            auto it = m_pendingFileMessagesByClientMessageId.find(
+                clientMessageId);
+            if (it == m_pendingFileMessagesByClientMessageId.end())
+            {
+                return;
+            }
+
+            it->transferState = MessageTransferState::Sending;
+            it->transferProgress = 100;
+            it->transferStatusText = QStringLiteral("发送中");
+            upsertPendingFileMessage(*it);
+
+            QJsonObject data;
+            data.insert(QStringLiteral("conversation_id"), it->conversationId);
+            data.insert(QStringLiteral("client_message_id"),
+                        it->clientMessageId);
+            data.insert(QStringLiteral("attachment_upload_key"),
+                        response.upload.attachmentUploadKey);
+            if (!it->caption.isEmpty())
+            {
+                data.insert(QStringLiteral("caption"), it->caption);
+            }
+
+            const QString wsRequestId = m_chatWsClient->sendBusinessEvent(
+                QStringLiteral("message.send_file"),
+                data);
+            if (wsRequestId.trimmed().isEmpty())
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "文件临时上传成功，但发送 ws.send(message.send_file) 失败，client_message_id="
+                    << it->clientMessageId
+                    << " upload_request_id="
+                    << response.requestId;
+                markPendingFileMessageFailed(it->clientMessageId,
+                                             QStringLiteral("文件发送失败"));
+                return;
+            }
+
+            m_pendingFileClientIdsByWsRequestId.insert(wsRequestId,
+                                                       it->clientMessageId);
+
+            CHATCLIENT_LOG_INFO("conversation.manager")
+                << "文件临时上传成功，准备发送文件消息，conversation_id="
+                << it->conversationId
+                << " client_message_id="
+                << it->clientMessageId
+                << " upload_key="
+                << response.upload.attachmentUploadKey
+                << " ws_request_id="
+                << wsRequestId;
+        },
+        [this, clientMessageId = pending.clientMessageId](
+            const chatclient::dto::file::ApiErrorDto &error) {
+            m_pendingFileClientIdsByUploadRequestId.remove(
+                error.requestId.trimmed());
+            CHATCLIENT_LOG_WARN("conversation.manager")
+                << "文件临时上传失败，request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+            markPendingFileMessageFailed(
+                clientMessageId,
+                localizeFileAttachmentUploadError(error));
+        });
+
+    if (uploadRequestId.trimmed().isEmpty())
+    {
+        markPendingFileMessageFailed(pending.clientMessageId,
+                                     QStringLiteral("文件上传失败"));
+        return false;
+    }
+
+    if (m_pendingFileMessagesByClientMessageId.contains(
+            pending.clientMessageId))
+    {
+        m_pendingFileClientIdsByUploadRequestId.insert(
+            uploadRequestId,
+            pending.clientMessageId);
+    }
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "已启动文件消息发送，conversation_id="
+        << trimmedConversationId
+        << " client_message_id="
+        << pending.clientMessageId
+        << " upload_request_id="
+        << uploadRequestId
+        << " local_path="
+        << trimmedLocalPath;
+    return true;
+}
+
+bool ConversationManager::downloadFileMessage(
+    const FileDownloadRequest &request)
+{
+    // 文件消息下载职责统一收口在 ConversationManager：
+    // 1. 由它拿当前登录态 access token；
+    // 2. 由它把下载进度回写到 MessageModelRegistry；
+    // 3. 由它决定默认下载目录与落盘时机。
+    if (!m_authService || !m_authService->hasActiveSession() || !m_fileApiClient)
+    {
+        return false;
+    }
+
+    const QString trimmedConversationId = request.conversationId.trimmed();
+    const QString trimmedRemoteUrl = request.remoteUrl.trimmed();
+    if (trimmedConversationId.isEmpty() || trimmedRemoteUrl.isEmpty())
+    {
+        return false;
+    }
+
+    const QString identityKey =
+        messageIdentityKey(trimmedConversationId, request.identity);
+    if (identityKey.isEmpty())
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "拒绝下载文件消息，缺少可追踪的消息身份键，conversation_id="
+            << trimmedConversationId
+            << " remote_url="
+            << trimmedRemoteUrl;
+        return false;
+    }
+
+    if (m_pendingFileDownloadRequestIdsByIdentityKey.contains(identityKey))
+    {
+        CHATCLIENT_LOG_INFO("conversation.manager")
+            << "当前文件消息已在下载中，忽略重复下载请求，conversation_id="
+            << trimmedConversationId
+            << " identity_key="
+            << identityKey;
+        return false;
+    }
+
+    const QString sanitizedFileName = sanitizeFileName(request.fileName);
+    QString targetPath = request.savePath.trimmed();
+    if (targetPath.isEmpty())
+    {
+        targetPath = defaultDownloadFilePath(sanitizedFileName);
+    }
+    else
+    {
+        targetPath = QFileInfo(targetPath).absoluteFilePath();
+    }
+
+    if (targetPath.isEmpty())
+    {
+        return false;
+    }
+
+    const QString currentLocalPath =
+        request.currentLocalPath.trimmed().isEmpty()
+            ? QString()
+            : QFileInfo(request.currentLocalPath.trimmed()).absoluteFilePath();
+    if (!currentLocalPath.trimmed().isEmpty() &&
+        QFileInfo::exists(currentLocalPath))
+    {
+        // 已经下载过的文件，如果用户只是想“另存为”，优先直接做本地复制，
+        // 避免再走一遍完整网络下载。
+        if (currentLocalPath == targetPath)
+        {
+            m_messageModelRegistry->updateFilePayload(trimmedConversationId,
+                                                      request.identity,
+                                                      targetPath,
+                                                      trimmedRemoteUrl,
+                                                      sanitizedFileName,
+                                                      request.mimeType,
+                                                      request.sizeBytes);
+            m_messageModelRegistry->updateTransferState(
+                trimmedConversationId,
+                request.identity,
+                MessageTransferState::None,
+                -1,
+                QString());
+            return true;
+        }
+
+        QString errorMessage;
+        if (copyLocalFile(currentLocalPath, targetPath, &errorMessage))
+        {
+            m_messageModelRegistry->updateFilePayload(trimmedConversationId,
+                                                      request.identity,
+                                                      targetPath,
+                                                      trimmedRemoteUrl,
+                                                      sanitizedFileName,
+                                                      request.mimeType,
+                                                      request.sizeBytes);
+            m_messageModelRegistry->updateTransferState(
+                trimmedConversationId,
+                request.identity,
+                MessageTransferState::None,
+                -1,
+                QString());
+            CHATCLIENT_LOG_INFO("conversation.manager")
+                << "文件消息已从现有本地文件复制到新路径，conversation_id="
+                << trimmedConversationId
+                << " identity_key="
+                << identityKey
+                << " source_path="
+                << currentLocalPath
+                << " target_path="
+                << targetPath;
+            return true;
+        }
+
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "复制已下载文件失败，准备回退到远端重新下载，conversation_id="
+            << trimmedConversationId
+            << " identity_key="
+            << identityKey
+            << " source_path="
+            << currentLocalPath
+            << " target_path="
+            << targetPath
+            << " error="
+            << errorMessage;
+    }
+
+    const QString accessToken =
+        m_authService->currentSession().accessToken.trimmed();
+    const QString requestId = m_fileApiClient->downloadAttachmentByUrl(
+        accessToken,
+        trimmedRemoteUrl,
+        [this, identityKey](
+            const chatclient::dto::file::DownloadedAttachmentDto &downloaded) {
+            const QString requestId =
+                m_pendingFileDownloadRequestIdsByIdentityKey.take(identityKey);
+            if (requestId.isEmpty())
+            {
+                return;
+            }
+
+            const PendingFileDownload pending =
+                m_pendingFileDownloadsByRequestId.take(requestId);
+            if (pending.conversationId.isEmpty())
+            {
+                return;
+            }
+
+            const QString resolvedFileName =
+                !pending.fileName.trimmed().isEmpty()
+                    ? pending.fileName
+                    : sanitizeFileName(downloaded.fileName);
+            const QString resolvedMimeType =
+                !pending.mimeType.trimmed().isEmpty()
+                    ? pending.mimeType.trimmed()
+                    : downloaded.mimeType.trimmed();
+
+            QString errorMessage;
+            if (!writeBytesToFile(pending.targetPath,
+                                  downloaded.content,
+                                  &errorMessage))
+            {
+                m_messageModelRegistry->updateTransferState(
+                    pending.conversationId,
+                    pending.identity,
+                    MessageTransferState::Failed,
+                    -1,
+                    errorMessage.isEmpty() ? QStringLiteral("保存文件失败")
+                                           : errorMessage);
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "文件消息下载完成但落盘失败，conversation_id="
+                    << pending.conversationId
+                    << " request_id="
+                    << requestId
+                    << " target_path="
+                    << pending.targetPath
+                    << " error="
+                    << errorMessage;
+                return;
+            }
+
+            const qint64 resolvedSizeBytes =
+                pending.sizeBytes >= 0
+                    ? pending.sizeBytes
+                    : static_cast<qint64>(downloaded.content.size());
+            m_messageModelRegistry->updateFilePayload(
+                pending.conversationId,
+                pending.identity,
+                pending.targetPath,
+                pending.remoteUrl,
+                resolvedFileName,
+                resolvedMimeType,
+                resolvedSizeBytes);
+            m_messageModelRegistry->updateTransferState(
+                pending.conversationId,
+                pending.identity,
+                MessageTransferState::None,
+                -1,
+                QString());
+
+            CHATCLIENT_LOG_INFO("conversation.manager")
+                << "文件消息下载并落盘成功，conversation_id="
+                << pending.conversationId
+                << " request_id="
+                << requestId
+                << " remote_url="
+                << pending.remoteUrl
+                << " target_path="
+                << pending.targetPath
+                << " size_bytes="
+                << resolvedSizeBytes;
+        },
+        [this, identityKey](
+            const chatclient::dto::file::ApiErrorDto &error) {
+            QString requestId = error.requestId.trimmed();
+            if (requestId.isEmpty())
+            {
+                requestId =
+                    m_pendingFileDownloadRequestIdsByIdentityKey.value(
+                        identityKey);
+            }
+
+            const QString mappedRequestId =
+                m_pendingFileDownloadRequestIdsByIdentityKey.take(identityKey);
+            if (!mappedRequestId.isEmpty())
+            {
+                requestId = mappedRequestId;
+            }
+
+            const PendingFileDownload pending =
+                m_pendingFileDownloadsByRequestId.take(requestId);
+            if (pending.conversationId.isEmpty())
+            {
+                return;
+            }
+
+            const QString localizedMessage =
+                localizeAttachmentDownloadError(error);
+            m_messageModelRegistry->updateTransferState(
+                pending.conversationId,
+                pending.identity,
+                MessageTransferState::Failed,
+                -1,
+                localizedMessage);
+
+            CHATCLIENT_LOG_WARN("conversation.manager")
+                << "文件消息下载失败，conversation_id="
+                << pending.conversationId
+                << " request_id="
+                << requestId
+                << " remote_url="
+                << pending.remoteUrl
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+        });
+
+    if (requestId.trimmed().isEmpty())
+    {
+        m_messageModelRegistry->updateTransferState(trimmedConversationId,
+                                                    request.identity,
+                                                    MessageTransferState::Failed,
+                                                    -1,
+                                                    QStringLiteral("文件下载失败"));
+        return false;
+    }
+
+    PendingFileDownload pending;
+    pending.requestId = requestId;
+    pending.conversationId = trimmedConversationId;
+    pending.identity = request.identity;
+    pending.fileName = sanitizedFileName;
+    pending.remoteUrl = trimmedRemoteUrl;
+    pending.mimeType = request.mimeType.trimmed();
+    pending.sizeBytes = request.sizeBytes;
+    pending.targetPath = targetPath;
+    m_pendingFileDownloadsByRequestId.insert(requestId, pending);
+    m_pendingFileDownloadRequestIdsByIdentityKey.insert(identityKey, requestId);
+
+    m_messageModelRegistry->updateTransferState(trimmedConversationId,
+                                                request.identity,
+                                                MessageTransferState::Downloading,
+                                                0,
+                                                QStringLiteral("下载中 0%"));
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "已启动文件消息下载，conversation_id="
+        << trimmedConversationId
+        << " request_id="
+        << requestId
+        << " identity_key="
+        << identityKey
+        << " remote_url="
+        << trimmedRemoteUrl
+        << " target_path="
+        << targetPath;
+    return true;
+}
+
 bool ConversationManager::sendTextMessage(const QString &conversationId,
                                           const QString &text)
 {
@@ -1013,6 +1639,12 @@ void ConversationManager::handleRealtimeAckEvent(const QString &route,
     if (route == QStringLiteral("message.send_image"))
     {
         handleMessageSendImageAck(ok, code, message, data, requestId);
+        return;
+    }
+
+    if (route == QStringLiteral("message.send_file"))
+    {
+        handleMessageSendFileAck(ok, code, message, data, requestId);
         return;
     }
 
@@ -1195,6 +1827,97 @@ void ConversationManager::handleMessageSendImageAck(
         << it->clientMessageId;
 }
 
+void ConversationManager::handleMessageSendFileAck(
+    const bool ok,
+    const int code,
+    const QString &message,
+    const QJsonObject &data,
+    const QString &requestId)
+{
+    const QString clientMessageId =
+        m_pendingFileClientIdsByWsRequestId.take(requestId.trimmed());
+    if (clientMessageId.isEmpty())
+    {
+        return;
+    }
+
+    auto it = m_pendingFileMessagesByClientMessageId.find(clientMessageId);
+    if (it == m_pendingFileMessagesByClientMessageId.end())
+    {
+        return;
+    }
+
+    if (!ok)
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "文件消息发送确认失败，request_id="
+            << requestId
+            << " code="
+            << code
+            << " message="
+            << message;
+        markPendingFileMessageFailed(
+            clientMessageId,
+            localizeFileSendAckError(code, message));
+        return;
+    }
+
+    const QString conversationId =
+        data.value(QStringLiteral("conversation_id")).toString().trimmed();
+    const QString messageId =
+        data.value(QStringLiteral("message_id")).toString().trimmed();
+    const qint64 seq =
+        data.value(QStringLiteral("seq")).toVariant().toLongLong();
+    const qint64 createdAtMs =
+        data.value(QStringLiteral("created_at_ms")).toVariant().toLongLong();
+    if (conversationId.isEmpty() || messageId.isEmpty() || seq <= 0)
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "文件消息发送确认缺少关键字段，request_id="
+            << requestId;
+        markPendingFileMessageFailed(clientMessageId,
+                                     QStringLiteral("文件发送失败"));
+        return;
+    }
+
+    it->conversationId = conversationId;
+    it->messageId = messageId;
+    it->seq = seq;
+    it->createdAtMs = createdAtMs > 0 ? createdAtMs : it->sentAtMs;
+    it->transferState = MessageTransferState::None;
+    it->transferProgress = -1;
+    it->transferStatusText.clear();
+    upsertPendingFileMessage(*it);
+
+    ConversationRuntimeState &state = ensureState(conversationId);
+    state.initialized = true;
+    state.lastLoadedMaxSeq = qMax(state.lastLoadedMaxSeq, seq);
+
+    chatclient::dto::conversation::ConversationMessageDto messageDto;
+    messageDto.messageId = messageId;
+    messageDto.conversationId = conversationId;
+    messageDto.seq = seq;
+    messageDto.senderId = currentUserId();
+    messageDto.hasClientMessageId = true;
+    messageDto.clientMessageId = it->clientMessageId;
+    messageDto.messageType = QStringLiteral("file");
+    messageDto.createdAtMs = it->createdAtMs;
+    messageDto.content.insert(QStringLiteral("caption"), it->caption);
+    messageDto.content.insert(QStringLiteral("file_name"), it->fileName);
+    updateConversationSummaryFromMessage(messageDto,
+                                         QStringLiteral("[文件消息]"));
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "文件消息发送确认已接入，conversation_id="
+        << conversationId
+        << " message_id="
+        << messageId
+        << " seq="
+        << seq
+        << " client_message_id="
+        << it->clientMessageId;
+}
+
 void ConversationManager::handleAttachmentUploadProgress(
     const QString &requestId,
     const qint64 bytesSent,
@@ -1204,26 +1927,75 @@ void ConversationManager::handleAttachmentUploadProgress(
     // 因此这里先做 request_id -> client_message_id 的映射，再更新对应气泡状态。
     const QString clientMessageId =
         m_pendingImageClientIdsByUploadRequestId.value(requestId.trimmed());
-    if (clientMessageId.isEmpty())
+    if (!clientMessageId.isEmpty())
+    {
+        auto it = m_pendingImageMessagesByClientMessageId.find(clientMessageId);
+        if (it == m_pendingImageMessagesByClientMessageId.end() ||
+            it->transferState != MessageTransferState::Uploading)
+        {
+            return;
+        }
+
+        it->transferProgress =
+            bytesTotal > 0
+                ? qBound(0,
+                         static_cast<int>((bytesSent * 100) / bytesTotal),
+                         100)
+                : -1;
+        it->transferStatusText =
+            uploadProgressStatusText(bytesSent, bytesTotal);
+        upsertPendingImageMessage(*it);
+        return;
+    }
+
+    const QString fileClientMessageId =
+        m_pendingFileClientIdsByUploadRequestId.value(requestId.trimmed());
+    if (fileClientMessageId.isEmpty())
     {
         return;
     }
 
-    auto it = m_pendingImageMessagesByClientMessageId.find(clientMessageId);
-    if (it == m_pendingImageMessagesByClientMessageId.end() ||
-        it->transferState != MessageTransferState::Uploading)
+    auto fileIt =
+        m_pendingFileMessagesByClientMessageId.find(fileClientMessageId);
+    if (fileIt == m_pendingFileMessagesByClientMessageId.end() ||
+        fileIt->transferState != MessageTransferState::Uploading)
     {
         return;
     }
 
-    it->transferProgress =
+    fileIt->transferProgress =
         bytesTotal > 0
             ? qBound(0,
                      static_cast<int>((bytesSent * 100) / bytesTotal),
                      100)
             : -1;
-    it->transferStatusText = uploadProgressStatusText(bytesSent, bytesTotal);
-    upsertPendingImageMessage(*it);
+    fileIt->transferStatusText =
+        uploadProgressStatusText(bytesSent, bytesTotal);
+    upsertPendingFileMessage(*fileIt);
+}
+
+void ConversationManager::handleAttachmentDownloadProgress(
+    const QString &requestId,
+    const qint64 bytesReceived,
+    const qint64 bytesTotal)
+{
+    const auto it =
+        m_pendingFileDownloadsByRequestId.constFind(requestId.trimmed());
+    if (it == m_pendingFileDownloadsByRequestId.constEnd())
+    {
+        return;
+    }
+
+    m_messageModelRegistry->updateTransferState(
+        it->conversationId,
+        it->identity,
+        MessageTransferState::Downloading,
+        bytesTotal > 0
+            ? qBound(0,
+                     static_cast<int>((bytesReceived * 100) / bytesTotal),
+                     100)
+            : -1,
+        downloadProgressStatusText(bytesReceived, bytesTotal));
 }
 
 void ConversationManager::handleRealtimeNewEvent(const QString &route,
@@ -1325,6 +2097,34 @@ void ConversationManager::handleMessageCreatedEvent(const QJsonObject &data)
             }
         }
 
+        if (message.messageType == QStringLiteral("file") &&
+            message.hasClientMessageId)
+        {
+            const auto pendingIt =
+                m_pendingFileMessagesByClientMessageId.constFind(
+                    message.clientMessageId);
+            if (pendingIt != m_pendingFileMessagesByClientMessageId.constEnd())
+            {
+                item.file.localPath = pendingIt->localPath;
+                if (item.file.fileName.trimmed().isEmpty())
+                {
+                    item.file.fileName = pendingIt->fileName;
+                }
+                if (item.file.mimeType.trimmed().isEmpty())
+                {
+                    item.file.mimeType = pendingIt->mimeType;
+                }
+                if (item.file.sizeBytes < 0)
+                {
+                    item.file.sizeBytes = pendingIt->sizeBytes;
+                }
+                if (item.text.trimmed().isEmpty())
+                {
+                    item.text = pendingIt->caption;
+                }
+            }
+        }
+
         // 对于别人刚发来的正式图片消息，或者本机重连后重新补进来的正式图片消息，
         // 这里先尝试命中现有本地缓存。命中则立即可见；未命中则在 upsert 之后
         // 再异步下载并局部刷新图片字段。
@@ -1357,6 +2157,12 @@ void ConversationManager::handleMessageCreatedEvent(const QJsonObject &data)
         !message.clientMessageId.isEmpty())
     {
         removePendingImageMessage(message.clientMessageId);
+    }
+
+    if (message.messageType == QStringLiteral("file") &&
+        !message.clientMessageId.isEmpty())
+    {
+        removePendingFileMessage(message.clientMessageId);
     }
 
     CHATCLIENT_LOG_INFO("conversation.manager")
@@ -1675,7 +2481,12 @@ void ConversationManager::resetConversationData()
     m_pendingImageMessagesByClientMessageId.clear();
     m_pendingImageClientIdsByUploadRequestId.clear();
     m_pendingImageClientIdsByWsRequestId.clear();
+    m_pendingFileMessagesByClientMessageId.clear();
+    m_pendingFileClientIdsByUploadRequestId.clear();
+    m_pendingFileClientIdsByWsRequestId.clear();
     m_remoteImageTargetsByUrl.clear();
+    m_pendingFileDownloadsByRequestId.clear();
+    m_pendingFileDownloadRequestIdsByIdentityKey.clear();
     m_loadedSessionKey.clear();
     m_bootstrapSessionKey.clear();
     m_bootstrapInProgress = false;
@@ -1704,6 +2515,51 @@ QString ConversationManager::localizeConversationApiError(
     }
 
     return QStringLiteral("同步会话数据失败，请稍后重试");
+}
+
+QString ConversationManager::localizeFileAttachmentUploadError(
+    const chatclient::dto::file::ApiErrorDto &error)
+{
+    if (error.message == QStringLiteral("file size must not exceed 1 GB") ||
+        error.message == QStringLiteral("附件大小不能超过 1 GB"))
+    {
+        return QStringLiteral("文件大小不能超过 1 GB");
+    }
+
+    switch (error.errorCode)
+    {
+    case 40102:
+        return QStringLiteral("登录状态已失效");
+    case 40001:
+        return QStringLiteral("文件上传参数不合法");
+    default:
+        break;
+    }
+
+    return QStringLiteral("文件上传失败");
+}
+
+QString ConversationManager::localizeFileSendAckError(const int code,
+                                                      const QString &message)
+{
+    switch (code)
+    {
+    case 40102:
+        return QStringLiteral("登录状态已失效");
+    case 40400:
+        return QStringLiteral("目标会话不存在");
+    case 40001:
+        return QStringLiteral("文件消息参数不合法");
+    default:
+        break;
+    }
+
+    if (!message.trimmed().isEmpty())
+    {
+        return QStringLiteral("文件发送失败");
+    }
+
+    return QStringLiteral("文件发送失败");
 }
 
 void ConversationManager::updateConversationSummaryFromMessage(
@@ -1748,6 +2604,288 @@ QString ConversationManager::currentUserId() const
     }
 
     return m_authService->currentSession().user.userId;
+}
+
+QString ConversationManager::downloadProgressStatusText(
+    const qint64 bytesReceived,
+    const qint64 bytesTotal)
+{
+    if (bytesTotal > 0)
+    {
+        const int progress = qBound(
+            0,
+            static_cast<int>((bytesReceived * 100) / bytesTotal),
+            100);
+        return QStringLiteral("下载中 %1%").arg(progress);
+    }
+
+    return QStringLiteral("下载中 %1")
+        .arg(QLocale().formattedDataSize(qMax<qint64>(0, bytesReceived)));
+}
+
+QString ConversationManager::localizeAttachmentDownloadError(
+    const chatclient::dto::file::ApiErrorDto &error)
+{
+    switch (error.errorCode)
+    {
+    case 40102:
+        return QStringLiteral("登录状态已失效");
+    case 40400:
+        return QStringLiteral("文件不存在或无权限下载");
+    case 40001:
+        return QStringLiteral("文件下载参数不合法");
+    default:
+        break;
+    }
+
+    if (error.message == QStringLiteral("attachment file not found"))
+    {
+        return QStringLiteral("文件不存在或已被删除");
+    }
+
+    return QStringLiteral("文件下载失败");
+}
+
+QString ConversationManager::messageIdentityKey(const QString &conversationId,
+                                                const MessageItem &identity)
+{
+    const QString trimmedConversationId = conversationId.trimmed();
+    if (!trimmedConversationId.isEmpty() &&
+        !identity.messageId.trimmed().isEmpty())
+    {
+        return QStringLiteral("%1:message:%2")
+            .arg(trimmedConversationId, identity.messageId.trimmed());
+    }
+
+    if (!trimmedConversationId.isEmpty() &&
+        !identity.clientMessageId.trimmed().isEmpty())
+    {
+        return QStringLiteral("%1:client:%2")
+            .arg(trimmedConversationId, identity.clientMessageId.trimmed());
+    }
+
+    if (!trimmedConversationId.isEmpty() && identity.seq > 0)
+    {
+        return QStringLiteral("%1:seq:%2")
+            .arg(trimmedConversationId, QString::number(identity.seq));
+    }
+
+    return QString();
+}
+
+QString ConversationManager::sanitizeFileName(const QString &fileName)
+{
+    QString sanitized = QFileInfo(fileName.trimmed()).fileName().trimmed();
+    if (sanitized.isEmpty())
+    {
+        sanitized = QStringLiteral("attachment.bin");
+    }
+
+    static const QString forbiddenCharacters =
+        QStringLiteral("\\/:*?\"<>|");
+    for (QChar &character : sanitized)
+    {
+        if (forbiddenCharacters.contains(character))
+        {
+            character = QLatin1Char('_');
+        }
+    }
+
+    return sanitized;
+}
+
+QString ConversationManager::defaultDownloadFilePath(
+    const QString &fileName) const
+{
+    QString downloadRoot =
+        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (downloadRoot.trimmed().isEmpty())
+    {
+        downloadRoot =
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    }
+    if (downloadRoot.trimmed().isEmpty())
+    {
+        downloadRoot = QDir::homePath();
+    }
+
+    return uniqueDownloadFilePath(
+        QDir(downloadRoot).filePath(sanitizeFileName(fileName)));
+}
+
+QString ConversationManager::uniqueDownloadFilePath(
+    const QString &candidatePath)
+{
+    const QFileInfo candidateInfo(candidatePath);
+    const QString absolutePath = candidateInfo.absoluteFilePath();
+    if (!QFileInfo::exists(absolutePath))
+    {
+        return absolutePath;
+    }
+
+    const QString directoryPath = candidateInfo.absolutePath();
+    const QString baseName = candidateInfo.completeBaseName().trimmed().isEmpty()
+                                 ? QStringLiteral("attachment")
+                                 : candidateInfo.completeBaseName().trimmed();
+    const QString suffix = candidateInfo.completeSuffix().trimmed();
+
+    for (int index = 1; index < 10000; ++index)
+    {
+        const QString candidateFileName =
+            suffix.isEmpty()
+                ? QStringLiteral("%1 (%2)").arg(baseName).arg(index)
+                : QStringLiteral("%1 (%2).%3")
+                      .arg(baseName)
+                      .arg(index)
+                      .arg(suffix);
+        const QString nextPath =
+            QDir(directoryPath).filePath(candidateFileName);
+        if (!QFileInfo::exists(nextPath))
+        {
+            return nextPath;
+        }
+    }
+
+    return absolutePath;
+}
+
+bool ConversationManager::ensureDirectoryForFilePath(const QString &filePath)
+{
+    const QFileInfo fileInfo(filePath);
+    QDir directory(fileInfo.absolutePath());
+    if (directory.exists())
+    {
+        return true;
+    }
+
+    return directory.mkpath(QStringLiteral("."));
+}
+
+bool ConversationManager::writeBytesToFile(const QString &filePath,
+                                           const QByteArray &content,
+                                           QString *errorMessage)
+{
+    if (!ensureDirectoryForFilePath(filePath))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("创建目标目录失败");
+        }
+        return false;
+    }
+
+    QSaveFile outputFile(filePath);
+    if (!outputFile.open(QIODevice::WriteOnly))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("无法写入目标文件");
+        }
+        return false;
+    }
+
+    if (outputFile.write(content) != content.size())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("写入目标文件失败");
+        }
+        return false;
+    }
+
+    if (!outputFile.commit())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("提交目标文件失败");
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool ConversationManager::copyLocalFile(const QString &sourcePath,
+                                        const QString &targetPath,
+                                        QString *errorMessage)
+{
+    if (!QFileInfo::exists(sourcePath))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("源文件不存在");
+        }
+        return false;
+    }
+
+    if (!ensureDirectoryForFilePath(targetPath))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("创建目标目录失败");
+        }
+        return false;
+    }
+
+    QFile sourceFile(sourcePath);
+    if (!sourceFile.open(QIODevice::ReadOnly))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("无法读取现有本地文件");
+        }
+        return false;
+    }
+
+    QSaveFile targetFile(targetPath);
+    if (!targetFile.open(QIODevice::WriteOnly))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("无法写入目标文件");
+        }
+        return false;
+    }
+
+    QByteArray buffer;
+    buffer.resize(256 * 1024);
+    while (!sourceFile.atEnd())
+    {
+        const qint64 bytesRead = sourceFile.read(buffer.data(), buffer.size());
+        if (bytesRead < 0)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = QStringLiteral("读取现有本地文件失败");
+            }
+            return false;
+        }
+
+        if (bytesRead == 0)
+        {
+            continue;
+        }
+
+        if (targetFile.write(buffer.constData(), bytesRead) != bytesRead)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = QStringLiteral("写入目标文件失败");
+            }
+            return false;
+        }
+    }
+
+    if (!targetFile.commit())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("提交目标文件失败");
+        }
+        return false;
+    }
+
+    return true;
 }
 
 QString ConversationManager::remoteImageCacheFilePath(

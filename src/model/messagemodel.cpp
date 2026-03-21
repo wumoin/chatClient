@@ -85,12 +85,16 @@ QVariant MessageModel::data(const QModelIndex &index, int role) const
         return item.image.width;
     case ImageHeightRole:
         return item.image.height;
+    case FileAttachmentIdRole:
+        return item.file.attachmentId;
     case FileNameRole:
         return item.file.fileName;
     case FileLocalPathRole:
         return item.file.localPath;
     case FileRemoteUrlRole:
         return item.file.remoteUrl;
+    case FileMimeTypeRole:
+        return item.file.mimeType;
     case FileSizeBytesRole:
         return item.file.sizeBytes;
     case TransferStateRole:
@@ -120,9 +124,11 @@ QHash<int, QByteArray> MessageModel::roleNames() const
         {ImageRemoteUrlRole, "imageRemoteUrl"},
         {ImageWidthRole, "imageWidth"},
         {ImageHeightRole, "imageHeight"},
+        {FileAttachmentIdRole, "fileAttachmentId"},
         {FileNameRole, "fileName"},
         {FileLocalPathRole, "fileLocalPath"},
         {FileRemoteUrlRole, "fileRemoteUrl"},
+        {FileMimeTypeRole, "fileMimeType"},
         {FileSizeBytesRole, "fileSizeBytes"},
         {TransferStateRole, "transferState"},
         {TransferProgressRole, "transferProgress"},
@@ -280,6 +286,124 @@ bool MessageModel::updateImagePayload(const MessageItem &identity,
     emit dataChanged(changedIndex,
                      changedIndex,
                      {ImageLocalPathRole, ImageWidthRole, ImageHeightRole});
+    return true;
+}
+
+bool MessageModel::updateFilePayload(const MessageItem &identity,
+                                     const QString &localPath,
+                                     const QString &remoteUrl,
+                                     const QString &fileName,
+                                     const QString &mimeType,
+                                     qint64 sizeBytes,
+                                     const QString &attachmentId)
+{
+    const int row = findMessageRowByIdentity(identity);
+    if (row < 0)
+    {
+        return false;
+    }
+
+    MessageItem &existing = m_messages[row];
+    if (existing.messageType != MessageType::File)
+    {
+        return false;
+    }
+
+    bool changed = false;
+
+    const QString trimmedLocalPath = localPath.trimmed();
+    if (!trimmedLocalPath.isEmpty() &&
+        existing.file.localPath != trimmedLocalPath)
+    {
+        existing.file.localPath = trimmedLocalPath;
+        changed = true;
+    }
+
+    const QString trimmedRemoteUrl = remoteUrl.trimmed();
+    if (!trimmedRemoteUrl.isEmpty() &&
+        existing.file.remoteUrl != trimmedRemoteUrl)
+    {
+        existing.file.remoteUrl = trimmedRemoteUrl;
+        changed = true;
+    }
+
+    const QString trimmedFileName = fileName.trimmed();
+    if (!trimmedFileName.isEmpty() &&
+        existing.file.fileName != trimmedFileName)
+    {
+        existing.file.fileName = trimmedFileName;
+        changed = true;
+    }
+
+    const QString trimmedMimeType = mimeType.trimmed();
+    if (!trimmedMimeType.isEmpty() &&
+        existing.file.mimeType != trimmedMimeType)
+    {
+        existing.file.mimeType = trimmedMimeType;
+        changed = true;
+    }
+
+    if (sizeBytes >= 0 && existing.file.sizeBytes != sizeBytes)
+    {
+        existing.file.sizeBytes = sizeBytes;
+        changed = true;
+    }
+
+    const QString trimmedAttachmentId = attachmentId.trimmed();
+    if (!trimmedAttachmentId.isEmpty() &&
+        existing.file.attachmentId != trimmedAttachmentId)
+    {
+        existing.file.attachmentId = trimmedAttachmentId;
+        changed = true;
+    }
+
+    if (!changed)
+    {
+        return false;
+    }
+
+    const QModelIndex changedIndex = index(row, 0);
+    emit dataChanged(changedIndex,
+                     changedIndex,
+                     {FileAttachmentIdRole,
+                      FileNameRole,
+                      FileLocalPathRole,
+                      FileRemoteUrlRole,
+                      FileMimeTypeRole,
+                      FileSizeBytesRole});
+    return true;
+}
+
+bool MessageModel::updateTransferState(const MessageItem &identity,
+                                       MessageTransferState transferState,
+                                       int transferProgress,
+                                       const QString &statusText)
+{
+    const int row = findMessageRowByIdentity(identity);
+    if (row < 0)
+    {
+        return false;
+    }
+
+    MessageItem &existing = m_messages[row];
+    const QString trimmedStatusText = statusText.trimmed();
+    if (existing.transferState == transferState &&
+        existing.transferProgress == transferProgress &&
+        existing.transferStatusText == trimmedStatusText)
+    {
+        return false;
+    }
+
+    existing.transferState = transferState;
+    existing.transferProgress = transferProgress;
+    existing.transferStatusText = trimmedStatusText;
+
+    const QModelIndex changedIndex = index(row, 0);
+    emit dataChanged(changedIndex,
+                     changedIndex,
+                     {TransferStateRole,
+                      TransferProgressRole,
+                      TransferStatusTextRole});
     return true;
 }
 

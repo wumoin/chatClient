@@ -12,27 +12,37 @@
 #include "service/friend_service.h"
 #include "view/messagelistview.h"
 
+#include <QDesktopServices>
 #include <QAbstractItemView>
 #include <QCloseEvent>
 #include <QColor>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QImageReader>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QTextEdit>
+#include <QTextCursor>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
+#include <QWidgetAction>
+
+#include <optional>
 
 namespace {
 
@@ -48,6 +58,49 @@ constexpr int kConversationPeerUserIdRole = Qt::UserRole + 9;
 constexpr int kConversationAvatarStorageKeyRole = Qt::UserRole + 10;
 // 用于“当前没有真实会话选中”时挂一份空 MessageModel，避免右侧 view 解绑。
 const auto kEmptyConversationId = "__empty_conversation__";
+
+struct FileMessageUiContext
+{
+    MessageItem identity;
+    QString fileName;
+    QString localPath;
+    QString remoteUrl;
+    QString mimeType;
+    qint64 sizeBytes = -1;
+    MessageTransferState transferState = MessageTransferState::None;
+};
+
+QStringList defaultEmojiList()
+{
+    // 当前先提供一组聊天场景里最常用的 emoji。
+    // 这里保持静态常量列表，避免每次点开表情面板都重新拼装一份数据。
+    return {
+        QStringLiteral("😀"),
+        QStringLiteral("😁"),
+        QStringLiteral("😂"),
+        QStringLiteral("🤣"),
+        QStringLiteral("😊"),
+        QStringLiteral("😍"),
+        QStringLiteral("😘"),
+        QStringLiteral("🥳"),
+        QStringLiteral("😎"),
+        QStringLiteral("🤔"),
+        QStringLiteral("😭"),
+        QStringLiteral("😡"),
+        QStringLiteral("👍"),
+        QStringLiteral("👎"),
+        QStringLiteral("👏"),
+        QStringLiteral("🙏"),
+        QStringLiteral("🎉"),
+        QStringLiteral("❤️"),
+        QStringLiteral("🔥"),
+        QStringLiteral("✨"),
+        QStringLiteral("🌹"),
+        QStringLiteral("🍀"),
+        QStringLiteral("☕"),
+        QStringLiteral("🎁"),
+    };
+}
 
 QString localizeCreateConversationError(
     const chatclient::dto::conversation::ApiErrorDto &error)
@@ -225,6 +278,39 @@ QPixmap createTextAvatarPixmap(const QString &displayName, const QSize &size)
     painter.setPen(QColor(0x21, 0x4A, 0x7A));
     painter.drawText(pixmap.rect(), Qt::AlignCenter, avatarText(displayName));
     return pixmap;
+}
+
+std::optional<FileMessageUiContext> fileMessageUiContextFromIndex(
+    const QModelIndex &index)
+{
+    if (!index.isValid() ||
+        index.data(MessageModel::MessageTypeRole).toInt() !=
+            static_cast<int>(MessageType::File))
+    {
+        return std::nullopt;
+    }
+
+    FileMessageUiContext context;
+    context.identity.messageId =
+        index.data(MessageModel::MessageIdRole).toString().trimmed();
+    context.identity.clientMessageId =
+        index.data(MessageModel::ClientMessageIdRole).toString().trimmed();
+    context.identity.seq =
+        index.data(MessageModel::SeqRole).toLongLong();
+    context.fileName =
+        index.data(MessageModel::FileNameRole).toString().trimmed();
+    context.localPath =
+        index.data(MessageModel::FileLocalPathRole).toString().trimmed();
+    context.remoteUrl =
+        index.data(MessageModel::FileRemoteUrlRole).toString().trimmed();
+    context.mimeType =
+        index.data(MessageModel::FileMimeTypeRole).toString().trimmed();
+    context.sizeBytes =
+        index.data(MessageModel::FileSizeBytesRole).toLongLong();
+    context.transferState = static_cast<MessageTransferState>(
+        index.data(MessageModel::TransferStateRole).toInt());
+
+    return context;
 }
 
 }  // namespace
@@ -827,7 +913,7 @@ QWidget *ChatWindow::createMessageContentPage()
 
     m_messageEmojiButton = new QPushButton(QStringLiteral("表情"), composer);
     m_messageEmojiButton->setObjectName(QStringLiteral("composerGhostButton"));
-    m_messageFileButton = new QPushButton(QStringLiteral("图片"), composer);
+    m_messageFileButton = new QPushButton(QStringLiteral("附件"), composer);
     m_messageFileButton->setObjectName(QStringLiteral("composerGhostButton"));
     m_messageSendButton = new QPushButton(QStringLiteral("发送"), composer);
     m_messageSendButton->setObjectName(QStringLiteral("sendButton"));
@@ -848,7 +934,31 @@ QWidget *ChatWindow::createMessageContentPage()
     connect(m_messageFileButton,
             &QPushButton::clicked,
             this,
-            &ChatWindow::handleSendImage);
+            &ChatWindow::handleSendAttachment);
+    connect(m_messageEmojiButton,
+            &QPushButton::clicked,
+            this,
+            &ChatWindow::toggleEmojiPicker);
+    connect(m_messageListView,
+            &MessageListView::fileMessageActivated,
+            this,
+            &ChatWindow::handleFileMessageActivated);
+    connect(m_messageListView,
+            &MessageListView::fileMessageDownloadRequested,
+            this,
+            &ChatWindow::handleFileMessageDownloadRequested);
+    connect(m_messageListView,
+            &MessageListView::fileMessageDownloadToRequested,
+            this,
+            &ChatWindow::handleFileMessageDownloadToRequested);
+    connect(m_messageListView,
+            &MessageListView::fileMessageOpenRequested,
+            this,
+            &ChatWindow::handleFileMessageOpenRequested);
+    connect(m_messageListView,
+            &MessageListView::fileMessageOpenFolderRequested,
+            this,
+            &ChatWindow::handleFileMessageOpenFolderRequested);
 
     setConversationHeaderText(QStringLiteral("产品讨论组"),
                               QStringLiteral("3 人在线 · 需求评审中"));
@@ -1600,63 +1710,374 @@ void ChatWindow::handleSendMessage()
     m_messageEditor->clear();
 }
 
-void ChatWindow::handleSendImage()
+void ChatWindow::handleSendAttachment()
 {
     if (!m_conversationManager)
     {
         setConversationComposerHintText(
-            QStringLiteral("图片发送入口尚未初始化。"));
+            QStringLiteral("附件发送入口尚未初始化。"));
         return;
     }
 
     if (m_currentConversationId.trimmed().isEmpty())
     {
         setConversationComposerHintText(
-            QStringLiteral("请先在左侧选择一个会话，再发送图片。"));
+            QStringLiteral("请先在左侧选择一个会话，再发送附件。"));
         return;
     }
 
+    // 附件入口默认先给“所有文件”，避免界面层面的筛选器让用户误以为
+    // 只能发送少数几种扩展名。图片筛选和常见文档筛选仍然保留，方便手动切换。
+    //
+    // 真正决定走图片消息还是文件消息的，不是这里的 filter，而是下面基于
+    // QImageReader 的内容识别结果：
+    // - 能被识别为图片：走 message.send_image
+    // - 其它任意本地文件：走 message.send_file
     const QStringList localPaths = QFileDialog::getOpenFileNames(
         this,
-        QStringLiteral("选择图片"),
+        QStringLiteral("选择附件"),
         QString(),
-        QStringLiteral("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"));
+        QStringLiteral(
+            "所有文件 (*);;图片文件 (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;常见文档与压缩文件 (*.pdf *.zip *.rar *.7z *.txt *.md *.doc *.docx *.xls *.xlsx *.ppt *.pptx)"));
     if (localPaths.isEmpty())
     {
         return;
     }
 
     int startedCount = 0;
+    int imageCount = 0;
+    int fileCount = 0;
     for (const QString &localPath : localPaths)
     {
-        if (m_conversationManager->sendImageMessage(m_currentConversationId,
-                                                    localPath))
+        // 这里用“能否被图片解码器读取”来判断是否发送成图片消息。
+        // 这样即使用户是从“所有文件”筛选里选出来的真实图片，也仍然会被
+        // 自动分流到图片消息链路；反过来，所有无法识别为图片的文件都会统一
+        // 走普通文件消息链路，不依赖扩展名白名单。
+        QImageReader imageReader(localPath);
+        imageReader.setAutoTransform(true);
+        const bool isImageAttachment = imageReader.canRead();
+
+        const bool started = isImageAttachment
+                                 ? m_conversationManager->sendImageMessage(
+                                       m_currentConversationId,
+                                       localPath)
+                                 : m_conversationManager->sendFileMessage(
+                                       m_currentConversationId,
+                                       localPath);
+        if (started)
         {
             ++startedCount;
+            if (isImageAttachment)
+            {
+                ++imageCount;
+            }
+            else
+            {
+                ++fileCount;
+            }
         }
     }
 
     if (startedCount <= 0)
     {
         setConversationComposerHintText(
-            QStringLiteral("图片发送启动失败，请确认文件可读且实时通道可用。"));
+            QStringLiteral("附件发送启动失败，请确认文件可读且实时通道可用。"));
         return;
     }
 
     if (startedCount == 1)
     {
         setConversationComposerHintText(
-            QStringLiteral("图片已加入发送队列，正在上传。"));
+            imageCount == 1
+                ? QStringLiteral("图片已加入发送队列，正在上传。")
+                : QStringLiteral("文件已加入发送队列，正在上传。"));
     }
     else
     {
-        setConversationComposerHintText(
-            QStringLiteral("已将 %1 张图片加入发送队列，正在并发上传。")
-                .arg(startedCount));
+        QString hintText =
+            QStringLiteral("已将 %1 个附件加入发送队列").arg(startedCount);
+        if (imageCount > 0 && fileCount > 0)
+        {
+            hintText += QStringLiteral("（其中 %1 张图片、%2 个文件）")
+                            .arg(imageCount)
+                            .arg(fileCount);
+        }
+        else if (imageCount > 0)
+        {
+            hintText += QStringLiteral("（%1 张图片）").arg(imageCount);
+        }
+        else if (fileCount > 0)
+        {
+            hintText += QStringLiteral("（%1 个文件）").arg(fileCount);
+        }
+        hintText += QStringLiteral("，正在并发上传。");
+        setConversationComposerHintText(hintText);
     }
 
     if (m_messageListView)
     {
         m_messageListView->scrollToBottom();
     }
+}
+
+bool ChatWindow::requestFileMessageDownload(const QModelIndex &index,
+                                            const QString &targetPath)
+{
+    if (!m_conversationManager)
+    {
+        setConversationComposerHintText(QStringLiteral("文件下载入口尚未初始化。"));
+        return false;
+    }
+
+    if (m_currentConversationId.trimmed().isEmpty())
+    {
+        setConversationComposerHintText(
+            QStringLiteral("请先选择一个会话，再操作文件消息。"));
+        return false;
+    }
+
+    const auto context = fileMessageUiContextFromIndex(index);
+    if (!context.has_value())
+    {
+        return false;
+    }
+
+    chatclient::service::ConversationManager::FileDownloadRequest request;
+    request.conversationId = m_currentConversationId.trimmed();
+    request.identity = context->identity;
+    request.fileName = context->fileName;
+    request.remoteUrl = context->remoteUrl;
+    request.currentLocalPath = context->localPath;
+    request.mimeType = context->mimeType;
+    request.sizeBytes = context->sizeBytes;
+    request.savePath = targetPath.trimmed();
+
+    if (!m_conversationManager->downloadFileMessage(request))
+    {
+        setConversationComposerHintText(
+            QStringLiteral("文件下载启动失败，请稍后重试。"));
+        return false;
+    }
+
+    const QString displayFileName = context->fileName.trimmed().isEmpty()
+                                        ? QStringLiteral("附件")
+                                        : context->fileName.trimmed();
+    setConversationComposerHintText(
+        targetPath.trimmed().isEmpty()
+            ? QStringLiteral("已开始下载文件：%1").arg(displayFileName)
+            : QStringLiteral("已开始下载到指定位置：%1").arg(displayFileName));
+    return true;
+}
+
+void ChatWindow::handleFileMessageActivated(const QModelIndex &index)
+{
+    const auto context = fileMessageUiContextFromIndex(index);
+    if (!context.has_value())
+    {
+        return;
+    }
+
+    if (context->transferState == MessageTransferState::Uploading ||
+        context->transferState == MessageTransferState::Sending)
+    {
+        setConversationComposerHintText(
+            QStringLiteral("该文件消息仍在发送中，请稍后再试。"));
+        return;
+    }
+
+    if (context->transferState == MessageTransferState::Downloading)
+    {
+        setConversationComposerHintText(
+            QStringLiteral("文件正在下载中，请稍候。"));
+        return;
+    }
+
+    if (!context->localPath.trimmed().isEmpty() &&
+        QFileInfo::exists(context->localPath))
+    {
+        handleFileMessageOpenRequested(index);
+        return;
+    }
+
+    requestFileMessageDownload(index);
+}
+
+void ChatWindow::handleFileMessageDownloadRequested(const QModelIndex &index)
+{
+    requestFileMessageDownload(index);
+}
+
+void ChatWindow::handleFileMessageDownloadToRequested(
+    const QModelIndex &index,
+    const QString &targetPath)
+{
+    if (targetPath.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    requestFileMessageDownload(index, targetPath);
+}
+
+void ChatWindow::handleFileMessageOpenRequested(const QModelIndex &index)
+{
+    const auto context = fileMessageUiContextFromIndex(index);
+    if (!context.has_value())
+    {
+        return;
+    }
+
+    if (context->localPath.trimmed().isEmpty() ||
+        !QFileInfo::exists(context->localPath))
+    {
+        requestFileMessageDownload(index);
+        return;
+    }
+
+    if (!QDesktopServices::openUrl(
+            QUrl::fromLocalFile(QFileInfo(context->localPath).absoluteFilePath())))
+    {
+        setConversationComposerHintText(
+            QStringLiteral("打开文件失败，请确认系统已配置默认打开方式。"));
+        return;
+    }
+
+    setConversationComposerHintText(
+        QStringLiteral("正在打开文件：%1")
+            .arg(context->fileName.trimmed().isEmpty()
+                     ? QStringLiteral("附件")
+                     : context->fileName.trimmed()));
+}
+
+void ChatWindow::handleFileMessageOpenFolderRequested(
+    const QModelIndex &index)
+{
+    const auto context = fileMessageUiContextFromIndex(index);
+    if (!context.has_value())
+    {
+        return;
+    }
+
+    if (context->localPath.trimmed().isEmpty() ||
+        !QFileInfo::exists(context->localPath))
+    {
+        setConversationComposerHintText(
+            QStringLiteral("当前文件还没有下载到本地。"));
+        return;
+    }
+
+    const QString folderPath = QFileInfo(context->localPath).absolutePath();
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(folderPath)))
+    {
+        setConversationComposerHintText(
+            QStringLiteral("打开文件夹失败，请检查系统文件管理器配置。"));
+        return;
+    }
+
+    setConversationComposerHintText(
+        QStringLiteral("已打开文件所在目录。"));
+}
+
+void ChatWindow::toggleEmojiPicker()
+{
+    if (!m_messageEmojiButton || !m_messageEditor)
+    {
+        return;
+    }
+
+    ensureEmojiPickerCreated();
+    if (!m_messageEmojiMenu)
+    {
+        return;
+    }
+
+    // 再次点击“表情”按钮时直接关闭当前面板，行为和常见聊天工具保持一致。
+    if (m_messageEmojiMenu->isVisible())
+    {
+        m_messageEmojiMenu->hide();
+        return;
+    }
+
+    const QPoint popupPosition = m_messageEmojiButton->mapToGlobal(
+        QPoint(0, m_messageEmojiButton->height() + 6));
+    m_messageEmojiMenu->popup(popupPosition);
+}
+
+void ChatWindow::ensureEmojiPickerCreated()
+{
+    if (m_messageEmojiMenu)
+    {
+        return;
+    }
+
+    // 表情面板当前刻意做成轻量弹层，而不是新开一个独立窗口：
+    // 1. 只服务于当前聊天输入区；
+    // 2. 点击外部区域会自动关闭；
+    // 3. 后续如果要扩成分页、搜索或最近使用，也仍然可以在这块容器里继续演进。
+    m_messageEmojiMenu = new QMenu(this);
+    m_messageEmojiMenu->setObjectName(QStringLiteral("messageEmojiMenu"));
+    m_messageEmojiMenu->setToolTipsVisible(true);
+
+    auto *container = new QWidget(m_messageEmojiMenu);
+    auto *containerLayout = new QVBoxLayout(container);
+    containerLayout->setContentsMargins(12, 12, 12, 12);
+    containerLayout->setSpacing(10);
+
+    auto *titleLabel = new QLabel(QStringLiteral("常用表情"), container);
+    titleLabel->setObjectName(QStringLiteral("panelHeaderSubtitle"));
+    containerLayout->addWidget(titleLabel);
+
+    auto *emojiGrid = new QGridLayout();
+    emojiGrid->setContentsMargins(0, 0, 0, 0);
+    emojiGrid->setHorizontalSpacing(6);
+    emojiGrid->setVerticalSpacing(6);
+
+    const QStringList emojis = defaultEmojiList();
+    constexpr int kEmojiColumnCount = 6;
+    for (int index = 0; index < emojis.size(); ++index)
+    {
+        const QString emoji = emojis.at(index);
+        auto *emojiButton = new QPushButton(emoji, container);
+        emojiButton->setObjectName(QStringLiteral("emojiPickerButton"));
+        emojiButton->setToolTip(QStringLiteral("插入 %1").arg(emoji));
+        emojiButton->setFixedSize(40, 40);
+
+        // 每个按钮只负责一件事：把自己代表的 emoji 插入输入框。
+        // 输入框当前光标位置、焦点恢复和弹层关闭，都统一收口到 ChatWindow 内部。
+        connect(emojiButton,
+                &QPushButton::clicked,
+                this,
+                [this, emoji]() {
+                    insertEmojiIntoEditor(emoji);
+                    if (m_messageEmojiMenu)
+                    {
+                        m_messageEmojiMenu->hide();
+                    }
+                });
+
+        emojiGrid->addWidget(emojiButton,
+                             index / kEmojiColumnCount,
+                             index % kEmojiColumnCount);
+    }
+
+    containerLayout->addLayout(emojiGrid);
+
+    auto *contentAction = new QWidgetAction(m_messageEmojiMenu);
+    contentAction->setDefaultWidget(container);
+    m_messageEmojiMenu->addAction(contentAction);
+}
+
+void ChatWindow::insertEmojiIntoEditor(const QString &emoji)
+{
+    if (!m_messageEditor || emoji.isEmpty())
+    {
+        return;
+    }
+
+    // 直接操作 QTextCursor，可以精确保持“插入到当前光标位置”的行为，
+    // 而不是粗暴地把 emoji 追加到文本末尾。
+    QTextCursor cursor = m_messageEditor->textCursor();
+    cursor.insertText(emoji);
+    m_messageEditor->setTextCursor(cursor);
+    m_messageEditor->setFocus();
 }

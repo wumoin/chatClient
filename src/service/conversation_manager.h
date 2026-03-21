@@ -2,6 +2,7 @@
 
 #include "api/conversation_api_client.h"
 #include "dto/conversation_dto.h"
+#include "dto/file_dto.h"
 #include "model/messagemodel.h"
 
 #include <QHash>
@@ -93,6 +94,34 @@ class ConversationManager : public QObject
         QString transferStatusText;
     };
 
+    struct PendingFileMessage
+    {
+        // 当前文件消息所属会话。
+        QString conversationId;
+        // 客户端本地消息 ID；用于把上传、ack、new 三段结果收敛到同一行消息。
+        QString clientMessageId;
+        // 本地文件路径；发送方在正式消息到来前也可以直接打开本地文件。
+        QString localPath;
+        // 文件显示名，通常取自本地文件名。
+        QString fileName;
+        // 本地探测到的 MIME 类型；正式消息到来前先用于 UI 预览。
+        QString mimeType;
+        // 本地探测到的文件大小。
+        qint64 sizeBytes = -1;
+        // 当前文件附言；当前 UI 可为空。
+        QString caption;
+        // 客户端本地发起时间；在服务端 created_at_ms 回来前先用于时间展示。
+        qint64 sentAtMs = 0;
+        // 若服务端已确认正式消息，则会写入下面两个字段。
+        QString messageId;
+        qint64 seq = 0;
+        qint64 createdAtMs = 0;
+        // 当前文件消息的传输状态与直接展示给 delegate 的状态文案。
+        MessageTransferState transferState = MessageTransferState::Uploading;
+        int transferProgress = 0;
+        QString transferStatusText;
+    };
+
     struct RemoteImageHydrationTarget
     {
         // 目标图片消息所在会话；后续局部刷新时需要先路由到正确的 MessageModel。
@@ -103,6 +132,26 @@ class ConversationManager : public QObject
         QString clientMessageId;
         // 某些历史快照可能只剩 seq，这里继续保留第三层兜底键。
         qint64 seq = 0;
+    };
+
+    struct FileDownloadRequest
+    {
+        // 当前文件消息所属会话；下载完成后需要回写到对应会话模型。
+        QString conversationId;
+        // 用于定位目标消息行的身份键；通常带 message_id / client_message_id / seq 之一即可。
+        MessageItem identity;
+        // 文件展示名；为空时会退回到默认名 attachment.bin。
+        QString fileName;
+        // 当前消息对应的服务端下载地址。
+        QString remoteUrl;
+        // 当前消息已经落到本地的路径；若用户只是“另存为”，可优先直接从这个路径复制。
+        QString currentLocalPath;
+        // 服务端提供的 MIME 类型；当前主要用于日志与后续扩展。
+        QString mimeType;
+        // 已知文件大小；未知时为 -1。
+        qint64 sizeBytes = -1;
+        // 可选自定义保存路径；为空时由 ConversationManager 选择默认下载目录。
+        QString savePath;
     };
 
     /**
@@ -211,6 +260,36 @@ class ConversationManager : public QObject
     bool sendImageMessage(const QString &conversationId,
                           const QString &localPath,
                           const QString &caption = QString());
+    /**
+     * @brief 发送一条文件消息。
+     *
+     * 当前链路会依次执行：
+     * 1. 先把本地文件以“上传中”占位消息写入会话模型；
+     * 2. 再通过 HTTP 上传临时附件；
+     * 3. 上传成功后通过 `ws.send + route=message.send_file` 确认正式消息；
+     * 4. 最终由 `ws.ack / ws.new` 把本地占位消息收敛成正式消息。
+     *
+     * @param conversationId 会话唯一标识。
+     * @param localPath 本地文件路径。
+     * @param caption 可选文件附言。
+     * @return true 表示文件发送流程已经启动；false 表示当前参数或运行时条件不满足。
+     */
+    bool sendFileMessage(const QString &conversationId,
+                         const QString &localPath,
+                         const QString &caption = QString());
+    /**
+     * @brief 将一条正式文件消息下载到本地文件系统。
+     *
+     * 当前实现会：
+     * 1. 先把对应消息行切到“下载中”状态；
+     * 2. 通过 FileApiClient 下载正式附件；
+     * 3. 下载成功后写入目标文件；
+     * 4. 再局部回写文件本地路径，并清除下载状态。
+     *
+     * @param request 当前文件消息的下载请求描述。
+     * @return true 表示下载流程已经启动或本地复制已完成；false 表示参数或运行时条件不满足。
+     */
+    bool downloadFileMessage(const FileDownloadRequest &request);
 
     /**
      * @brief 通过 WS 发送一条文本消息。
@@ -302,9 +381,17 @@ class ConversationManager : public QObject
                                    const QString &message,
                                    const QJsonObject &data,
                                    const QString &requestId);
+    void handleMessageSendFileAck(bool ok,
+                                  int code,
+                                  const QString &message,
+                                  const QJsonObject &data,
+                                  const QString &requestId);
     void handleAttachmentUploadProgress(const QString &requestId,
                                         qint64 bytesSent,
                                         qint64 bytesTotal);
+    void handleAttachmentDownloadProgress(const QString &requestId,
+                                          qint64 bytesReceived,
+                                          qint64 bytesTotal);
     void handleRealtimeNewEvent(const QString &route, const QJsonObject &data);
     void handleMessageCreatedEvent(const QJsonObject &data);
     void handleConversationCreatedEvent(const QJsonObject &data);
@@ -315,6 +402,12 @@ class ConversationManager : public QObject
     void markPendingImageMessageFailed(const QString &clientMessageId,
                                        const QString &statusText);
     void removePendingImageMessage(const QString &clientMessageId);
+    MessageItem buildPendingFileMessageItem(
+        const PendingFileMessage &pending) const;
+    void upsertPendingFileMessage(const PendingFileMessage &pending);
+    void markPendingFileMessageFailed(const QString &clientMessageId,
+                                      const QString &statusText);
+    void removePendingFileMessage(const QString &clientMessageId);
     /**
      * @brief 若图片本地缓存已存在，则直接把缓存路径写回消息项。
      * @param item 待补齐本地图片路径的消息项；非图片消息或本来已有 localPath 时不会改动。
@@ -334,10 +427,30 @@ class ConversationManager : public QObject
     QString currentSessionKey() const;
     static QString localizeConversationApiError(
         const chatclient::dto::conversation::ApiErrorDto &error);
+    static QString localizeFileAttachmentUploadError(
+        const chatclient::dto::file::ApiErrorDto &error);
+    static QString localizeFileSendAckError(int code,
+                                            const QString &message);
     void updateConversationSummaryFromMessage(
         const chatclient::dto::conversation::ConversationMessageDto &message,
         const QString &previewText);
     QString currentUserId() const;
+    static QString downloadProgressStatusText(qint64 bytesReceived,
+                                              qint64 bytesTotal);
+    static QString localizeAttachmentDownloadError(
+        const chatclient::dto::file::ApiErrorDto &error);
+    static QString messageIdentityKey(const QString &conversationId,
+                                      const MessageItem &identity);
+    static QString sanitizeFileName(const QString &fileName);
+    QString defaultDownloadFilePath(const QString &fileName) const;
+    static QString uniqueDownloadFilePath(const QString &candidatePath);
+    static bool ensureDirectoryForFilePath(const QString &filePath);
+    static bool writeBytesToFile(const QString &filePath,
+                                 const QByteArray &content,
+                                 QString *errorMessage);
+    static bool copyLocalFile(const QString &sourcePath,
+                              const QString &targetPath,
+                              QString *errorMessage);
     /**
      * @brief 返回远端图片在本地缓存目录中的稳定路径。
      * @param remoteUrl 服务端返回的相对或绝对图片下载地址。
@@ -363,9 +476,33 @@ class ConversationManager : public QObject
     QHash<QString, QString> m_pendingImageClientIdsByUploadRequestId;
     // WS ack 同样只会带 request_id，因此再维护一层 ws request_id -> client_message_id。
     QHash<QString, QString> m_pendingImageClientIdsByWsRequestId;
+    // 文件消息发送链路与图片类似，只是最终 route / payload 字段不同。
+    QHash<QString, PendingFileMessage> m_pendingFileMessagesByClientMessageId;
+    QHash<QString, QString> m_pendingFileClientIdsByUploadRequestId;
+    QHash<QString, QString> m_pendingFileClientIdsByWsRequestId;
     // 相同 remoteUrl 的正式图片只下载一次；下载完成后再统一回写所有等待中的消息行。
     QHash<QString, QVector<RemoteImageHydrationTarget>>
         m_remoteImageTargetsByUrl;
+    struct PendingFileDownload
+    {
+        // FileApiClient 发起下载时生成的 request_id。
+        QString requestId;
+        // 当前下载任务所属会话。
+        QString conversationId;
+        // 目标消息的身份键；下载完成后用于精确回写同一行消息。
+        MessageItem identity;
+        // 当前文件展示名 / 远端地址 / MIME / 大小，用于落盘和日志。
+        QString fileName;
+        QString remoteUrl;
+        QString mimeType;
+        qint64 sizeBytes = -1;
+        // 本次下载最终写入的本地绝对路径。
+        QString targetPath;
+    };
+    // 以 FileApiClient 的 request_id 为键追踪文件下载过程。
+    QHash<QString, PendingFileDownload> m_pendingFileDownloadsByRequestId;
+    // 同一条消息同一时间只允许一个活动下载任务；这里做身份键去重。
+    QHash<QString, QString> m_pendingFileDownloadRequestIdsByIdentityKey;
 };
 
 }  // namespace chatclient::service

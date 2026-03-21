@@ -58,6 +58,35 @@ public:
      */
     void clearSelectedText();
 
+signals:
+    /**
+     * @brief 用户点击了文件消息卡片主体。
+     * @param index 当前命中的文件消息索引。
+     */
+    void fileMessageActivated(const QModelIndex &index);
+    /**
+     * @brief 用户请求把文件消息下载到默认目录。
+     * @param index 当前命中的文件消息索引。
+     */
+    void fileMessageDownloadRequested(const QModelIndex &index);
+    /**
+     * @brief 用户请求把文件消息下载到指定路径。
+     * @param index 当前命中的文件消息索引。
+     * @param targetPath 用户在文件对话框中选择的目标绝对路径。
+     */
+    void fileMessageDownloadToRequested(const QModelIndex &index,
+                                        const QString &targetPath);
+    /**
+     * @brief 用户请求直接打开已经下载好的本地文件。
+     * @param index 当前命中的文件消息索引。
+     */
+    void fileMessageOpenRequested(const QModelIndex &index);
+    /**
+     * @brief 用户请求打开已经下载文件所在目录。
+     * @param index 当前命中的文件消息索引。
+     */
+    void fileMessageOpenFolderRequested(const QModelIndex &index);
+
 protected:
     /**
      * @brief 处理鼠标按下事件并决定是否开始拖拽选区。
@@ -114,6 +143,24 @@ private:
      * @brief 清除手动光标设置并恢复系统默认光标。
      */
     void resetHoverCursor();
+    /**
+     * @brief 判断当前索引是否为文件消息。
+     * @param index 目标消息索引。
+     * @return true 表示该行是文件消息。
+     */
+    bool isFileMessageIndex(const QModelIndex &index) const;
+    /**
+     * @brief 判断当前文件消息是否已有可访问的本地文件。
+     * @param index 目标消息索引。
+     * @return true 表示 FileLocalPathRole 指向的文件当前存在。
+     */
+    bool hasDownloadedLocalFile(const QModelIndex &index) const;
+    /**
+     * @brief 生成“下载到...”对话框的默认建议路径。
+     * @param index 目标文件消息索引。
+     * @return 建议的绝对路径；若信息不足则返回空字符串。
+     */
+    QString suggestedDownloadPath(const QModelIndex &index) const;
 
     // true 表示处于“左键拖拽文本选区”过程。
     bool m_dragSelecting = false;
@@ -121,6 +168,8 @@ private:
     QPersistentModelIndex m_dragIndex;
     // 记录拖拽锚点字符位置（对应 selection anchor）。
     int m_dragAnchor = -1;
+    // 记录当前是否按下了文件消息卡片；松开且仍命中时触发“打开/下载”动作。
+    QPersistentModelIndex m_pressedFileCardIndex;
 
     // 禁止外部直接调用基类 setModel，统一走 setMessageModel。
     using QListView::setModel;

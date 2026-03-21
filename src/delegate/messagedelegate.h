@@ -35,6 +35,16 @@ public:
                        const QPoint &viewPos,
                        bool clampToTextRect = false) const;
     /**
+     * @brief 判断给定视图坐标是否命中文件消息卡片主体。
+     * @param option 当前项绘制选项。
+     * @param index 当前消息索引。
+     * @param viewPos 视图坐标。
+     * @return true 表示命中文件预览卡片；false 表示未命中或当前并非文件消息。
+     */
+    bool fileCardContains(const QStyleOptionViewItem &option,
+                          const QModelIndex &index,
+                          const QPoint &viewPos) const;
+    /**
      * @brief 更新当前正文选区状态。
      * @param index 选区所在消息索引。
      * @param anchor 选区锚点字符位置。

@@ -140,6 +140,40 @@ public:
                             const QString &localPath,
                             int width = -1,
                             int height = -1);
+    /**
+     * @brief 只更新指定会话中某条文件消息的文件预览字段。
+     * @param conversationId 目标会话 ID。
+     * @param identity 用于定位目标消息的身份键。
+     * @param localPath 已下载到本地的文件路径；为空时不更新。
+     * @param remoteUrl 远端下载地址；为空时不更新。
+     * @param fileName 文件展示名；为空时不更新。
+     * @param mimeType 文件 MIME 类型；为空时不更新。
+     * @param sizeBytes 文件大小；小于 0 时表示不更新。
+     * @param attachmentId 正式附件 ID；为空时不更新。
+     * @return true 表示命中并刷新了对应文件消息；false 表示目标消息还不在该会话 model 中。
+     */
+    bool updateFilePayload(const QString &conversationId,
+                           const MessageItem &identity,
+                           const QString &localPath = QString(),
+                           const QString &remoteUrl = QString(),
+                           const QString &fileName = QString(),
+                           const QString &mimeType = QString(),
+                           qint64 sizeBytes = -1,
+                           const QString &attachmentId = QString());
+    /**
+     * @brief 只更新指定会话中某条消息的传输状态字段。
+     * @param conversationId 目标会话 ID。
+     * @param identity 用于定位目标消息的身份键。
+     * @param transferState 新的传输状态。
+     * @param transferProgress 当前进度百分比；未知时可传 -1。
+     * @param statusText 直接给 delegate 展示的状态文案。
+     * @return true 表示命中并刷新了对应消息；false 表示目标消息还不在该会话 model 中。
+     */
+    bool updateTransferState(const QString &conversationId,
+                             const MessageItem &identity,
+                             MessageTransferState transferState,
+                             int transferProgress,
+                             const QString &statusText);
 
 private:
     QHash<QString, MessageModel *> m_models;
