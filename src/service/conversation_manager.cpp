@@ -212,6 +212,8 @@ void ConversationManager::connectRealtimeChannel()
     }
 
     const auto &session = m_authService->currentSession();
+    // 这里只负责把当前 session 交给实时通道，不顺手重做 HTTP bootstrap。
+    // 因此“WS 重连成功”与“本地快照已经重新对齐”是两件事。
     m_chatWsClient->setSession(session.accessToken,
                                m_authService->currentDeviceId(),
                                session.deviceSessionId);
@@ -232,6 +234,7 @@ void ConversationManager::initializeConversationDataIfNeeded()
     // 2. 先拉会话列表
     // 3. 再为每个会话拉一页历史消息
     // 4. 后续切换会话不再走 HTTP，主要依赖本地 model + WS 增量更新
+    // 5. 当前不会因为“仅 WS 断线重连”而自动重跑 bootstrap
     if (!m_authService || !m_authService->hasActiveSession()) {
         return;
     }
@@ -246,6 +249,9 @@ void ConversationManager::initializeConversationDataIfNeeded()
     }
 
     if (!m_loadedSessionKey.isEmpty() && m_loadedSessionKey == sessionKey) {
+        // 同一个 device_session_id 命中后，直接复用现有本地快照。
+        // 这能避免重复全量拉取，但也意味着如果断线期间漏掉实时事件，
+        // 需要额外的 resync 入口才能补齐。
         return;
     }
 
@@ -465,6 +471,8 @@ void ConversationManager::applyConversationMessagesSnapshot(
     ConversationRuntimeState &state = ensureState(conversationId);
     state.initialized = true;
     state.loading = false;
+    // 服务端已经返回 next_before_seq / next_after_seq 这类分页游标，
+    // 但当前客户端还没有“继续向前/向后加载”UI，这里先只保留最小运行时状态。
     state.hasMoreBefore = response.hasMore;
     state.lastLoadedMaxSeq =
         response.items.isEmpty() ? 0 : response.items.constLast().seq;
@@ -859,6 +867,9 @@ void ConversationManager::handleConversationCreatedEvent(
 {
     // 新建会话事件只需要把会话摘要注入列表即可；
     // 消息内容仍然由后续历史同步或实时 message.created 来补齐。
+    //
+    // 这里默认服务端下发的 conversation 摘要已经是“当前登录用户视角”。
+    // 如果服务端直接转发了别的用户视角 DTO，这里的 peerUser 会被错误落库到本地模型里。
     const QJsonValue conversationValue =
         data.value(QStringLiteral("conversation"));
     if (!conversationValue.isObject())

@@ -11,6 +11,8 @@
 // - 以 conversationId 为键管理多个 MessageModel；
 // - 对外提供按会话写入文本/图片/文件消息的统一接口；
 // - 视图层只需拿到目标会话的 model 并绑定即可。
+//
+// 它相当于“当前客户端已打开过的会话消息容器表”，生命周期通常长于单次会话切换。
 class MessageModelRegistry : public QObject
 {
     Q_OBJECT

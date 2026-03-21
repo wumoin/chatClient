@@ -20,6 +20,10 @@ namespace chatclient::api {
  * 3) 获取指定会话详情；
  * 4) 获取指定会话历史消息；
  * 5) 发送文本消息。
+ *
+ * 这些能力都属于“HTTP 快照 / 命令式请求”：
+ * - 拉列表、拉详情、拉历史消息时拿到的是某个时刻的快照；
+ * - sendTextMessage 只表示本次 HTTP 提交成功，不负责补做 WS 实时分发或本地去重。
  */
 class ConversationApiClient : public QObject
 {

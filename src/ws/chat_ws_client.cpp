@@ -334,6 +334,8 @@ void ChatWsClient::handleTextMessageReceived(const QString &message)
         updateStatus(localizedMessage);
         if (!m_authenticated)
         {
+            // 鉴权阶段一旦明确是“旧登录态已不可恢复”，就停止自动重连，
+            // 避免客户端拿着同一份失效 session 做无意义空转。
             if (payload.code == 40102 || payload.code == 40300)
             {
                 m_reconnectEnabled = false;
@@ -399,6 +401,10 @@ void ChatWsClient::handleDisconnected()
 {
     // 被动断线后，如果仍然持有登录态，就按固定间隔继续尝试重连；
     // 否则只更新状态，不做额外动作。
+    //
+    // 注意：当前重连只恢复“链路连通 + ws.auth”。
+    // 如果断线期间漏掉了 ws.new 事件，这里不会自动补拉 HTTP 快照；
+    // 一致性补偿仍然要靠上层显式重新 bootstrap。
     const bool shouldReconnect = m_reconnectEnabled && hasSessionContext();
     m_authenticated = false;
 

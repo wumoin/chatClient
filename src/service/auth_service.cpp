@@ -175,6 +175,8 @@ bool AuthService::loginUser(const QString &account,
         [this, account](const chatclient::dto::auth::LoginResponseDto &response) {
             m_loggingIn = false;
 
+            // 当前客户端会解析 refresh_token，但不会持久化也不会自动续期。
+            // 本地会话先只保存 access token + device_session_id，后续可用性主要靠服务端请求再暴露。
             chatclient::dto::auth::LoginSessionDto session;
             session.account = account;
             session.user = response.user;
@@ -622,6 +624,9 @@ void AuthService::persistSession(
     }
 
     QSettings settings = authSettings();
+    // 本地持久化的“登录态”只是客户端缓存视图，不是服务端会话真相。
+    // 当前 deliberately 不落 refresh_token，因此 restoreSession 只能恢复上次缓存，
+    // 不能保证后续 HTTP / WS 仍接受这份 access token。
     settings.setValue(QString::fromLatin1(kSettingsAccountKey), session.account);
     settings.setValue(QString::fromLatin1(kSettingsUserIdKey),
                       session.user.userId);
@@ -656,6 +661,8 @@ void AuthService::restoreSession()
 {
     QSettings settings = authSettings();
 
+    // restoreSession 只恢复本地缓存，不会主动向服务端校验 access token，
+    // 也不会补做 refresh；真正是否还能继续用，要等后续 HTTP / WS 请求再暴露出来。
     chatclient::dto::auth::LoginSessionDto session;
     session.account =
         settings.value(QString::fromLatin1(kSettingsAccountKey))

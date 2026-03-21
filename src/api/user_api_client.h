@@ -17,6 +17,9 @@ namespace chatclient::api {
  * 当前只先承接和头像有关的两条最小链路：
  * 1) 上传注册阶段使用的临时头像；
  * 2) 拉取指定用户当前正式头像文件。
+ *
+ * 这里既有 JSON 响应，也有二进制文件响应。
+ * 它只处理传输层细节，不在这一层决定头像缓存策略或 UI 解码方式。
  */
 class UserApiClient : public QObject
 {

@@ -48,6 +48,8 @@ void UserApiClient::uploadTemporaryAvatar(
         << " local_file="
         << localFilePath;
 
+    // 这里上传的是“注册阶段的临时头像对象”，
+    // 还没有和正式 user 记录绑定，后续是否提交为真实头像由注册接口决定。
     auto *file = new QFile(localFilePath);
     if (!file->open(QIODevice::ReadOnly))
     {
@@ -71,6 +73,8 @@ void UserApiClient::uploadTemporaryAvatar(
     const QMimeDatabase mimeDatabase;
     const QMimeType mimeType = mimeDatabase.mimeTypeForFile(localFilePath);
 
+    // multipart 组装留在 API client 内部完成，避免 service / widget 关心
+    // Qt 网络库对文件句柄和 body device 生命周期的要求。
     auto *multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
     QHttpPart filePart;
     const QString fileName = QFileInfo(localFilePath).fileName();
@@ -231,6 +235,8 @@ void UserApiClient::downloadUserAvatar(const QString &userId,
         << " user_id="
         << userId;
 
+    // 头像下载接口返回的是原始二进制流，而不是 JSON DTO。
+    // 是否转成 QImage、是否做磁盘缓存，交给调用方按 UI 场景决定。
     QNetworkRequest networkRequest(avatarUrl);
     applyRequestHeaders(&networkRequest, requestId);
 
@@ -271,6 +277,8 @@ void UserApiClient::downloadUserAvatar(const QString &userId,
                         ? QStringLiteral("头像文件响应不可用")
                         : reply->errorString();
 
+                // 失败时服务端可能仍然返回统一 JSON 错误结构，
+                // 因此这里在二进制下载场景下仍尝试做一次 JSON 解析。
                 chatclient::dto::user::ApiErrorDto error;
                 error.httpStatus = httpStatus;
                 error.requestId = requestId;
@@ -323,6 +331,7 @@ void UserApiClient::applyRequestHeaders(QNetworkRequest *request,
     }
 
     request->setRawHeader("Accept", "*/*");
+    // 头像下载可能返回图片流，不能强制限制成 application/json。
     request->setRawHeader("X-Request-Id", requestId.toUtf8());
 }
 

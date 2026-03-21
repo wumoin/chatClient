@@ -190,6 +190,9 @@ void AuthApiClient::loginUser(
         << " device_id="
         << request.deviceId;
 
+    // 登录成功后服务端会返回一整套“当前设备登录上下文”：
+    // access_token / refresh_token / device_session_id / 当前用户信息。
+    // API client 只负责发请求和解析，不在这里决定是否写入本地会话。
     QNetworkRequest networkRequest(loginUrl);
     applyJsonHeaders(&networkRequest, requestId);
 
@@ -330,6 +333,8 @@ void AuthApiClient::logoutUser(const QString &accessToken,
         << " url="
         << logoutUrl.toString();
 
+    // 登出接口的真实语义是“撤销当前 access token 对应的 device_session”。
+    // 本地是否立即清理登录态、是否切回登录页，都由上层 AuthService / 窗口层决定。
     QNetworkRequest networkRequest(logoutUrl);
     applyJsonHeaders(&networkRequest, requestId);
     applyAuthorizationHeader(&networkRequest, accessToken);
@@ -464,6 +469,8 @@ bool AuthApiClient::logoutUserBlocking(
         << " url="
         << logoutUrl.toString();
 
+    // 这个同步版本只用于应用收尾路径：
+    // 进入局部事件循环短暂等待结果，尽量在进程退出前完成 session 撤销。
     QNetworkRequest networkRequest(logoutUrl);
     applyJsonHeaders(&networkRequest, requestId);
     applyAuthorizationHeader(&networkRequest, accessToken);
@@ -588,6 +595,7 @@ void AuthApiClient::applyJsonHeaders(QNetworkRequest *request,
     request->setHeader(QNetworkRequest::ContentTypeHeader,
                        QStringLiteral("application/json"));
     request->setRawHeader("Accept", "application/json");
+    // 统一透传 request_id，便于把客户端日志和服务端 access log / trace 对起来。
     request->setRawHeader("X-Request-Id", requestId.toUtf8());
 }
 

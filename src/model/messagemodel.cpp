@@ -131,12 +131,15 @@ void MessageModel::upsertMessageItem(const MessageItem &item)
     const int existingRow = findMessageRowByIdentity(item);
     if (existingRow >= 0)
     {
+        // 命中同一条消息时直接整行替换：
+        // 常见场景是本地临时消息后续被正式 message_id / seq 覆盖。
         m_messages[existingRow] = item;
         const QModelIndex changedIndex = index(existingRow, 0);
         emit dataChanged(changedIndex, changedIndex);
         return;
     }
 
+    // 未命中同一条消息时，再按 seq 找到一个稳定插入位置。
     const int row = insertionRowForMessage(item);
     beginInsertRows(QModelIndex(), row, row);
     m_messages.insert(row, item);
@@ -220,6 +223,7 @@ int MessageModel::findMessageRowByIdentity(const MessageItem &item) const
 {
     if (!item.messageId.trimmed().isEmpty())
     {
+        // 服务端正式 message_id 是最稳定的身份键，一旦出现优先使用它去重。
         for (int row = 0; row < m_messages.size(); ++row)
         {
             if (m_messages.at(row).messageId == item.messageId)
@@ -231,6 +235,8 @@ int MessageModel::findMessageRowByIdentity(const MessageItem &item) const
 
     if (!item.clientMessageId.trimmed().isEmpty())
     {
+        // 本地发送中的消息先依赖 client_message_id 去重，
+        // 后续 ack/new 到来时通常会把正式字段补齐。
         for (int row = 0; row < m_messages.size(); ++row)
         {
             if (m_messages.at(row).clientMessageId == item.clientMessageId)
@@ -242,6 +248,7 @@ int MessageModel::findMessageRowByIdentity(const MessageItem &item) const
 
     if (item.seq > 0)
     {
+        // 某些服务端快照可能只给 seq，仍然可以用会话内顺序号兜底判断是否已存在。
         for (int row = 0; row < m_messages.size(); ++row)
         {
             if (m_messages.at(row).seq == item.seq)
@@ -258,6 +265,7 @@ int MessageModel::insertionRowForMessage(const MessageItem &item) const
 {
     if (item.seq <= 0)
     {
+        // 没有正式 seq 的消息通常是本地占位态，先追加到当前末尾即可。
         return m_messages.size();
     }
 
@@ -266,6 +274,7 @@ int MessageModel::insertionRowForMessage(const MessageItem &item) const
         const qint64 existingSeq = m_messages.at(row).seq;
         if (existingSeq > 0 && existingSeq > item.seq)
         {
+            // 保持所有正式消息按 seq 升序稳定排列，减少列表跳动。
             return row;
         }
     }

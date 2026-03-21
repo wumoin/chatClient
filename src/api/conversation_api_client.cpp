@@ -263,6 +263,8 @@ void ConversationApiClient::fetchConversationMessages(
     ConversationMessagesFailureHandler onFailure)
 {
     const QString requestId = createRequestId(QStringLiteral("messages"));
+    // 历史消息接口是典型的“快照分页”入口：
+    // ConversationManager 会决定 before_seq / after_seq 的用法以及如何写回本地 model。
     QUrl url = chatclient::config::AppConfig::instance().conversationMessagesUrl(
         conversationId);
     QUrlQuery query(url);
@@ -328,6 +330,9 @@ void ConversationApiClient::sendTextMessage(
     const QUrl url = chatclient::config::AppConfig::instance()
                          .conversationSendTextUrl(conversationId);
 
+    // 这里是纯 HTTP 发送链路：
+    // 它只返回“服务端已接受并落库”的响应，不负责把消息再实时广播给其它在线端。
+    // 当前项目里真正的实时发送主路径仍然是 ConversationManager -> WS。
     CHATCLIENT_LOG_INFO("conversation.api")
         << "开始发送文本消息，request_id=" << requestId
         << " conversation_id=" << conversationId

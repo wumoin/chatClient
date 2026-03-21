@@ -13,6 +13,10 @@
 // FriendApiClient 处理好友域 HTTP 请求，例如搜索用户、发送申请、
 // 查询申请列表和好友列表。上层 service 会在这里的 DTO 结果基础上
 // 再做业务编排和界面更新。
+//
+// 一个边界要特别明确：
+// - 这里返回的是 HTTP 快照或命令执行结果；
+// - 它不负责把返回数据并入本地列表，也不负责和 WS 实时事件做对账。
 namespace chatclient::api {
 
 FriendApiClient::FriendApiClient(QObject *parent)
@@ -38,6 +42,8 @@ void FriendApiClient::searchUserByAccount(const QString &accessToken,
         << " account="
         << account;
 
+    // 搜索接口只是“账号 -> 用户是否存在 / 基本资料”的只读查询，
+    // 不会建立好友关系，也不会自动触发后续列表刷新。
     QNetworkRequest networkRequest(searchUrl);
     applyRequestHeaders(&networkRequest, requestId);
     applyAuthorizationHeader(&networkRequest, accessToken);
@@ -153,6 +159,8 @@ void FriendApiClient::fetchOutgoingRequests(
         << " url="
         << url.toString();
 
+    // “已发送申请”是一个快照列表接口。
+    // 如果界面要保持最新状态，通常由 FriendService 在发送申请成功或收到实时事件后重新拉取。
     QNetworkRequest networkRequest(url);
     applyRequestHeaders(&networkRequest, requestId);
     applyAuthorizationHeader(&networkRequest, accessToken);
@@ -263,6 +271,8 @@ void FriendApiClient::fetchFriends(const QString &accessToken,
         << " url="
         << url.toString();
 
+    // 好友列表表示“当前已经成为好友的正式关系”，
+    // 不包含待处理申请，也不试图在这里做增量合并。
     QNetworkRequest networkRequest(url);
     applyRequestHeaders(&networkRequest, requestId);
     applyAuthorizationHeader(&networkRequest, accessToken);
@@ -376,6 +386,8 @@ void FriendApiClient::fetchIncomingRequests(
         << " url="
         << url.toString();
 
+    // “收到的申请”与“已发送的申请”共享同一套 DTO 结构，
+    // 但语义不同：这一份更适合驱动审批 UI，而不是正式好友列表。
     QNetworkRequest networkRequest(url);
     applyRequestHeaders(&networkRequest, requestId);
     applyAuthorizationHeader(&networkRequest, accessToken);
@@ -491,6 +503,8 @@ void FriendApiClient::sendFriendRequest(
         << " target_user_id="
         << request.targetUserId;
 
+    // 发送申请属于命令式写操作。
+    // 成功时这里只返回本次新建的 friend_request 摘要，后续列表刷新交给上层决定。
     QNetworkRequest networkRequest(url);
     applyRequestHeaders(&networkRequest, requestId);
     applyJsonRequestHeader(&networkRequest);
@@ -614,6 +628,9 @@ void FriendApiClient::acceptFriendRequest(
         << " friend_request_id="
         << requestId;
 
+    // 同意申请之后，服务端关系面会发生两件事：
+    // 申请状态结束、双方好友关系建立。
+    // 但本地好友列表不会在这里自动更新，仍需依赖上层刷新或实时事件。
     QNetworkRequest networkRequest(url);
     applyRequestHeaders(&networkRequest, clientRequestId);
     applyAuthorizationHeader(&networkRequest, accessToken);
@@ -731,6 +748,8 @@ void FriendApiClient::rejectFriendRequest(
         << " friend_request_id="
         << requestId;
 
+    // 拒绝申请只会改变 friend_request 的状态，不会影响正式好友列表。
+    // UI 若要立刻反映结果，也需要上层主动刷新对应快照。
     QNetworkRequest networkRequest(url);
     applyRequestHeaders(&networkRequest, clientRequestId);
     applyAuthorizationHeader(&networkRequest, accessToken);
@@ -843,6 +862,7 @@ void FriendApiClient::applyRequestHeaders(QNetworkRequest *request,
     }
 
     request->setRawHeader("Accept", "application/json");
+    // 与其它 API client 保持一致，方便跨层串起一次好友操作的完整日志。
     request->setRawHeader("X-Request-Id", requestId.toUtf8());
 }
 

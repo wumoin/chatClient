@@ -14,8 +14,11 @@ namespace chatclient::api {
 /**
  * @brief 认证 HTTP API 客户端。
  *
- * 这一层只负责把注册 / 登录请求发给服务端，并把响应解析成 DTO。
+ * 这一层只负责把注册 / 登录 / 登出请求发给服务端，并把响应解析成 DTO。
  * 它不负责界面提示、不负责登录态保存，也不直接操作窗口控件。
+ *
+ * 特别是登录返回里的 access token / refresh token / device_session_id，
+ * 这里只做透传；真正决定“当前客户端登录态”何时生效的是 AuthService。
  */
 class AuthApiClient : public QObject
 {
@@ -77,6 +80,9 @@ public:
      * @param out 成功时写入解析后的登出响应 DTO，可为空。
      * @param error 失败时写入统一错误 DTO，可为空。
      * @return true 表示服务端已确认登出或当前 token 已失效；false 表示请求失败或超时。
+     *
+     * 该接口主要服务于“切换账号 / 退出程序”这种收尾路径，调用方希望在窗口销毁前
+     * 尽量把 device_session 撤销掉，因此这里保留一个短超时的阻塞式版本。
      */
     bool logoutUserBlocking(const QString &accessToken,
                             chatclient::dto::auth::LogoutResponseDto *out = nullptr,

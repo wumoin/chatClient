@@ -46,6 +46,7 @@ constexpr int kFriendUserIdRole = Qt::UserRole + 7;
 constexpr int kFriendAvatarStorageKeyRole = Qt::UserRole + 8;
 constexpr int kConversationPeerUserIdRole = Qt::UserRole + 9;
 constexpr int kConversationAvatarStorageKeyRole = Qt::UserRole + 10;
+// 用于“当前没有真实会话选中”时挂一份空 MessageModel，避免右侧 view 解绑。
 const auto kEmptyConversationId = "__empty_conversation__";
 
 QString localizeCreateConversationError(
@@ -98,6 +99,7 @@ QListWidgetItem *createRichListItem(const QString &title,
                                     const QString &subtitle,
                                     QListWidget *parent)
 {
+    // 好友中间栏当前仍是轻量过渡实现：直接把标题 / 副标题压进 QListWidgetItem。
     auto *item = new QListWidgetItem(QStringLiteral("%1\n%2").arg(title, subtitle),
                                      parent);
     item->setSizeHint(QSize(0, 64));
@@ -342,6 +344,10 @@ void ChatWindow::setCurrentUserProfile(const QString &displayName,
         m_profileStatusLabel->setText(statusText);
     }
 
+    // 当前用户资料一旦可用，就可以尝试做两件事：
+    // 1. 建立实时通道；
+    // 2. 触发会话 bootstrap。
+    // 这两个动作都依赖已经拿到有效登录态和当前用户身份。
     connectRealtimeChannel();
     if (m_conversationManager)
     {
@@ -438,6 +444,8 @@ void ChatWindow::setAuthService(chatclient::service::AuthService *authService)
         return;
     }
 
+    // FriendService 跟当前登录态强绑定：
+    // 切账号时直接重建一份，避免继续持有旧 access token / 旧用户上下文。
     m_friendService = new chatclient::service::FriendService(m_authService, this);
     connect(m_friendService,
             &chatclient::service::FriendService::friendsStarted,
@@ -635,6 +643,8 @@ QWidget *ChatWindow::createNavigationRail()
 
 QWidget *ChatWindow::createMiddlePanel()
 {
+    // 中间栏只负责“列表模式切换”：
+    // 消息模式显示会话列表，好友模式显示好友列表。
     auto *panel = new QFrame(this);
     panel->setObjectName(QStringLiteral("listPanel"));
     panel->setFixedWidth(340);
@@ -671,6 +681,8 @@ QWidget *ChatWindow::createMessagesPage()
     m_messageSearchEdit->setObjectName(QStringLiteral("panelSearch"));
     m_messageSearchEdit->setPlaceholderText(QStringLiteral("搜索会话"));
 
+    // 会话中间栏当前仍是 QWidget 投影层：
+    // ConversationManager 内部维护真正的 ConversationListModel，这里只负责展示。
     m_sessionList = new QListWidget(page);
     m_sessionList->setObjectName(QStringLiteral("entityList"));
     m_sessionList->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -714,6 +726,7 @@ QWidget *ChatWindow::createFriendsPage()
     m_addFriendButton->setObjectName(QStringLiteral("panelPrimaryButton"));
     connect(m_addFriendButton, &QPushButton::clicked, this, &ChatWindow::showAddFriendDialog);
 
+    // 好友中间栏直接展示 FriendService 最近一次拉回来的好友快照。
     m_friendList = new QListWidget(page);
     m_friendList->setObjectName(QStringLiteral("entityList"));
     m_friendList->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -785,6 +798,7 @@ QWidget *ChatWindow::createMessageContentPage()
 
     m_messageListView = new MessageListView(panel);
     m_messageListView->setObjectName(QStringLiteral("messageListView"));
+    // 初始先绑定一份“空会话”模型，等左侧真实会话选中后再切到对应 conversation_id。
     m_messageListView->setMessageModel(
         m_conversationManager->ensureMessageModel(
             QString::fromLatin1(kEmptyConversationId)));
@@ -968,6 +982,9 @@ void ChatWindow::switchSection(const SidebarSection section)
         m_contentStack->setCurrentIndex(showMessages ? 0 : 1);
     }
 
+    // 切模式时立即刷新当前页数据：
+    // - 消息页依赖 ConversationManager 当前快照；
+    // - 好友页依赖 FriendService 当前快照 / 拉取结果。
     if (showMessages) {
         updateSessionListFromManager(true);
         handleSessionSelectionChanged();
@@ -1016,6 +1033,8 @@ void ChatWindow::handleStartPrivateConversation()
         QStringLiteral("正在为你和 %1 创建或复用私聊会话。")
             .arg(peerName.isEmpty() ? QStringLiteral("该好友") : peerName));
 
+    // “发起会话”按钮本身不直接操作会话列表。
+    // 真正的建会话、复用旧会话、写回本地列表都由 ConversationManager 决定。
     m_conversationManager->createPrivateConversation(
         peerUserId,
         [this, peerName](
@@ -1102,6 +1121,8 @@ void ChatWindow::showSessionPlaceholder(const QString &message)
         return;
     }
 
+    // 占位态不仅更新中间栏文案，还要把右侧聊天区切回空模型，
+    // 避免仍然显示上一条会话的消息内容。
     m_sessionList->clear();
     auto *item = new QListWidgetItem(message, m_sessionList);
     item->setFlags(Qt::NoItemFlags);
@@ -1122,6 +1143,8 @@ void ChatWindow::updateSessionListFromManager(bool keepSelection)
         return;
     }
 
+    // 这里只消费 ConversationManager 当前已经准备好的快照，
+    // 自己不额外触发 HTTP 拉取，保持 UI 层只做投影。
     const QString previousConversationId =
         keepSelection ? m_currentConversationId : QString();
     auto *conversationModel = m_conversationManager->conversationListModel();
@@ -1310,6 +1333,8 @@ void ChatWindow::handleSessionSelectionChanged()
     }
 
     if (m_conversationManager) {
+        // 当前实现里的“已读”仍是客户端局部状态，只影响中间栏未读角标展示。
+        // 是否同步服务端 last_read_seq，需要后续补正式读状态链路。
         m_conversationManager->markConversationReadLocally(
             m_currentConversationId);
     }
@@ -1365,6 +1390,7 @@ void ChatWindow::handleFriendSelectionChanged()
             item->data(kFriendHintRole).toString());
     }
 
+    // 好友详情区当前没有独立 model，直接读取 QListWidgetItem 上缓存的字段即可。
     if (!m_userApiClient || m_currentSelectedFriendUserId.isEmpty() ||
         friendAvatarStorageKey.isEmpty())
     {
@@ -1408,6 +1434,8 @@ void ChatWindow::handleFriendSelectionChanged()
 
 void ChatWindow::showAddFriendDialog()
 {
+    // 添加好友弹窗关闭后，统一刷新一次好友列表，
+    // 这样无论弹窗里发生了搜索、发送申请还是审批，都能把中间栏拉回最新快照。
     AddFriendDialog dialog(m_authService, m_conversationManager, this);
     dialog.exec();
     refreshFriendList(true);
@@ -1419,6 +1447,7 @@ void ChatWindow::refreshFriendList(const bool keepSelection)
         return;
     }
 
+    // 好友页目前走“整表刷新”思路，而不是局部增量 patch。
     if (!keepSelection) {
         m_currentSelectedFriendUserId.clear();
     }
@@ -1463,6 +1492,8 @@ void ChatWindow::updateFriendList(
     for (int index = 0; index < friends.size(); ++index)
     {
         const auto &friendItem = friends.at(index);
+        // 把右侧详情页会直接用到的字段提前缓存进 item role，
+        // 这样切换选中项时不需要再向 service 反查一次 DTO。
         auto *item = createRichListItem(
             friendItem.user.nickname,
             QStringLiteral("账号：%1").arg(friendItem.user.account),
@@ -1557,6 +1588,8 @@ void ChatWindow::handleSendMessage()
         return;
     }
 
+    // 当前发送按钮直接走实时通道。
+    // 若 WS 当前不可用，这里不会自动退回到 HTTP send-text 接口。
     if (!m_conversationManager->sendTextMessage(m_currentConversationId, text)) {
         CHATCLIENT_LOG_WARN("chat.window")
             << "通过实时通道发送文本消息失败，conversation_id="
@@ -1601,6 +1634,8 @@ void ChatWindow::handleSendLocalImage()
         return;
     }
 
+    // 这里还是本地演示能力：
+    // 图片消息只追加到当前客户端 MessageModel，不会上行到服务端。
     setConversationComposerHintText(
         QStringLiteral("已在当前客户端追加一条本地图片消息，仅用于本地展示。"));
     if (m_messageListView)

@@ -67,9 +67,11 @@ struct MessageItem {
 };
 
 // 消息列表模型：
-// 1) 持有消息数组；
+// 1) 持有“单个会话当前已加载消息”的数组；
 // 2) 通过 role 向视图/委托暴露消息字段；
 // 3) 在插入消息时发送 beginInsertRows/endInsertRows 通知，驱动 QListView 增量刷新。
+//
+// 这里不做网络请求，也不维护多会话索引；多会话路由由 MessageModelRegistry 负责。
 class MessageModel : public QAbstractListModel
 {
     Q_OBJECT
@@ -189,7 +191,11 @@ public:
     void clear();
 
 private:
+    // 按“服务端 message_id -> 本地 client_message_id -> seq”的优先级查找同一条消息，
+    // 以便把本地临时消息、ack 返回和后续正式广播收敛成一行。
     int findMessageRowByIdentity(const MessageItem &item) const;
+    // seq 大于 0 的正式消息按 seq 升序插入；
+    // seq 不可用的本地临时消息统一追加到末尾，等待后续 ack/upsert 修正。
     int insertionRowForMessage(const MessageItem &item) const;
 
     QVector<MessageItem> m_messages;

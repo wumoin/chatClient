@@ -17,6 +17,7 @@ MessageModel *MessageModelRegistry::ensureModel(const QString &conversationId)
         return existing;
     }
 
+    // registry 作为 QObject 父对象统一托管各会话 model 生命周期。
     MessageModel *created = new MessageModel(this);
     m_models.insert(conversationId, created);
     return created;

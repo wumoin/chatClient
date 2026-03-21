@@ -28,15 +28,18 @@ class ConversationManager;
 class FriendService;
 }
 
-// ChatWindow 当前承担“聊天主界面骨架”职责：
+// ChatWindow 当前承担“聊天主界面编排层”职责：
 // 1) 构建左侧导航栏、中间列表栏、右侧详情区三段式布局；
-// 2) 提供“消息 / 好友”两种主模式切换；
-// 3) 保留现有消息演示链路，并为后续好友能力预留独立入口。
+// 2) 把 ConversationManager / FriendService / AuthService 暴露出来的状态投影成 QWidget；
+// 3) 处理用户交互，并把意图回传给 service 层。
 //
-// 注意：
-// - 消息页当前仍然使用演示数据；
-// - 好友页当前已接入真实好友列表 HTTP 数据源；
-// - 会话列表当前继续使用 QListWidget。
+// 它不是消息、会话、好友状态的最终数据源。真正的业务状态分别来自：
+// - AuthService：当前登录态；
+// - ConversationManager：会话列表、消息模型、实时通道；
+// - FriendService：好友列表快照。
+//
+// 当前仍保留一个过渡实现：中间栏的会话列表 / 好友列表继续使用 QListWidget，
+// 因此需要把 model / DTO 快照再投影成 item widget。
 class ChatWindow : public QWidget
 {
     Q_OBJECT
@@ -258,54 +261,89 @@ class ChatWindow : public QWidget
      */
     void showSessionPlaceholder(const QString &message);
 
+    // 当前左侧导航选中的主模式，决定中间栏和右侧内容区切到哪一页。
     SidebarSection m_currentSection{SidebarSection::kMessages};
 
-    // 左侧导航栏：消息 / 好友两种主入口。
+    // 左上角导航头像徽标：显示当前登录用户头像，拿不到图片时退回文字头像。
     QLabel *m_navAvatarLabel = nullptr;
+    // 左侧“消息”主入口按钮，切到会话列表 + 聊天内容页。
     QPushButton *m_messagesNavButton = nullptr;
+    // 左侧“好友”主入口按钮，切到好友列表 + 好友详情页。
     QPushButton *m_friendsNavButton = nullptr;
+    // 左侧“切换账号”按钮，点击后向外发出 switchAccountRequested。
     QPushButton *m_switchAccountNavButton = nullptr;
+    // 左侧“登出”按钮，点击后向外发出 signOutRequested。
     QPushButton *m_signOutNavButton = nullptr;
 
-    // 中间栏：根据左侧导航切换不同列表页。
+    // 中间栏内容栈：在“消息页列表”和“好友页列表”之间切换。
     QStackedWidget *m_middleStack = nullptr;
+    // 消息页顶部搜索框；当前主要是 UI 占位，尚未接真实会话过滤逻辑。
     QLineEdit *m_messageSearchEdit = nullptr;
+    // 好友页顶部搜索框；当前主要是 UI 占位，尚未接真实好友过滤逻辑。
     QLineEdit *m_friendSearchEdit = nullptr;
+    // 中间栏会话列表控件：把 ConversationManager 的会话快照投影成 QListWidget。
     QListWidget *m_sessionList = nullptr;
+    // 中间栏好友列表控件：展示 FriendService 最近一次拉回来的正式好友快照。
     QListWidget *m_friendList = nullptr;
+    // 好友页“添加好友”按钮，打开 AddFriendDialog。
     QPushButton *m_addFriendButton = nullptr;
 
-    // 右侧内容区：消息详情页 / 好友详情页。
+    // 右侧内容区栈：在聊天详情页和好友详情页之间切换。
     QStackedWidget *m_contentStack = nullptr;
+    // 聊天页顶部标题，显示当前选中会话名称。
     QLabel *m_conversationTitleLabel = nullptr;
+    // 聊天页顶部副标题，显示未读/同步状态等会话补充信息。
     QLabel *m_conversationMetaLabel = nullptr;
+    // 聊天页顶部“语音”按钮；当前属于占位入口，尚未接真实能力。
     QPushButton *m_conversationVoiceButton = nullptr;
+    // 聊天页顶部“视频”按钮；当前属于占位入口，尚未接真实能力。
     QPushButton *m_conversationVideoButton = nullptr;
+    // 输入框上方提示文案，会显示服务地址、图片发送提示、错误提示等。
     QLabel *m_messageComposerHintLabel = nullptr;
+    // 好友详情页头像区域，优先显示真实头像，退回时显示文字头像。
     QLabel *m_friendDetailAvatarLabel = nullptr;
+    // 好友详情页主标题，显示当前选中好友名称。
     QLabel *m_friendDetailTitleLabel = nullptr;
+    // 好友详情页副标题，显示账号、用户 ID 等摘要信息。
     QLabel *m_friendDetailMetaLabel = nullptr;
+    // 好友详情页说明区，显示提示语、错误信息或发起会话结果。
     QLabel *m_friendDetailHintLabel = nullptr;
+    // 好友详情页“发起会话”按钮，用来创建或复用一对一私聊。
     QPushButton *m_startChatButton = nullptr;
 
-    // 消息页：仍然沿用现有 QListView + model + delegate 展示链路。
+    // 右侧消息列表视图，内部绑定某个 conversation_id 对应的 MessageModel。
     MessageListView *m_messageListView = nullptr;
+    // 当前仅记录“UI 当前选中的是哪个会话”，不代表服务端 read state。
     QString m_currentConversationId;
+    // 会话列表头像的简单内存缓存，以 peer_user_id 为 key，避免重复下载头像。
     QHash<QString, QPixmap> m_conversationAvatarCache;
+    // 聊天输入框，负责承载当前待发送的文本内容。
     QTextEdit *m_messageEditor = nullptr;
+    // 输入区“表情”按钮；当前属于占位入口，尚未接真实表情面板。
     QPushButton *m_messageEmojiButton = nullptr;
+    // 输入区“图片”按钮，用来选择本地图片并追加到当前消息模型。
     QPushButton *m_messageFileButton = nullptr;
+    // 输入区“发送”按钮，把当前输入框文本发到当前会话。
     QPushButton *m_messageSendButton = nullptr;
+    // 用户资料 HTTP 客户端，当前主要用于下载当前用户 / 好友 / 会话头像。
     chatclient::api::UserApiClient *m_userApiClient = nullptr;
+    // 外部注入的认证服务，用来判断是否有有效登录态；ChatWindow 不拥有它的生命周期。
     chatclient::service::AuthService *m_authService = nullptr;
+    // 会话编排服务，由 ChatWindow 创建并持有，负责会话列表、消息模型和实时通道。
     chatclient::service::ConversationManager *m_conversationManager = nullptr;
+    // 好友服务，依赖当前 AuthService 创建，负责好友列表刷新和好友域操作。
     chatclient::service::FriendService *m_friendService = nullptr;
 
-    // 左下角：当前登录用户信息。
+    // 左下角资料卡里的用户名标签。
     QLabel *m_profileNameLabel = nullptr;
+    // 左下角资料卡里的状态标签，显示实时连接状态或账号动作状态。
     QLabel *m_profileStatusLabel = nullptr;
+    // 当前登录用户 ID，用于异步下载头像时确认返回结果是否仍属于当前资料卡。
     QString m_currentProfileUserId;
+    // 当前登录用户头像 storage key，用来判断是否需要发起头像下载。
     QString m_currentProfileAvatarStorageKey;
+    // 好友页当前选中的好友 user_id，用于详情区刷新和发起私聊。
     QString m_currentSelectedFriendUserId;
+    // 应用退出路径中的关闭放行开关；为 false 时直接关闭窗口会先转成登出请求。
     bool m_allowClose = false;
 };
