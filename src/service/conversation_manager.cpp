@@ -145,6 +145,27 @@ QString displayPeerName(
     return conversation.peerUser.userId;
 }
 
+chatclient::dto::conversation::ConversationSummaryDto
+conversationSummaryFromDetail(
+    const chatclient::dto::conversation::ConversationDetailDto &detail)
+{
+    // 会话详情 DTO 比会话摘要 DTO 多了 my_member 等字段。
+    // 这里做一次显式映射，把“当前用户视角下真正可信”的详情数据压回摘要结构，
+    // 方便会话列表继续只依赖 ConversationSummaryDto 这一种模型输入。
+    chatclient::dto::conversation::ConversationSummaryDto summary;
+    summary.conversationId = detail.conversationId;
+    summary.conversationType = detail.conversationType;
+    summary.peerUser = detail.peerUser;
+    summary.lastMessageSeq = detail.lastMessageSeq;
+    summary.lastReadSeq = detail.myMember.lastReadSeq;
+    summary.unreadCount = detail.unreadCount;
+    summary.lastMessagePreview = detail.lastMessagePreview;
+    summary.hasLastMessageAtMs = detail.hasLastMessageAtMs;
+    summary.lastMessageAtMs = detail.lastMessageAtMs;
+    summary.createdAtMs = detail.createdAtMs;
+    return summary;
+}
+
 QVector<MessageItem> toMessageItems(
     const QVector<chatclient::dto::conversation::ConversationMessageDto>
         &messages,
@@ -2180,8 +2201,16 @@ void ConversationManager::handleConversationCreatedEvent(
     // 新建会话事件只需要把会话摘要注入列表即可；
     // 消息内容仍然由后续历史同步或实时 message.created 来补齐。
     //
-    // 这里默认服务端下发的 conversation 摘要已经是“当前登录用户视角”。
-    // 如果服务端直接转发了别的用户视角 DTO，这里的 peerUser 会被错误落库到本地模型里。
+    // 但这条事件里的 conversation DTO 天生是“视角敏感”的：
+    // - peer_user 要看“当前接收事件的是谁”；
+    // - last_read_seq / unread_count 也同样依赖当前用户视角。
+    //
+    // 因此这里先做一层保守处理：
+    // 1. 先把 WS 里带来的摘要写进本地，保证新会话能立刻出现在列表里；
+    // 2. 若发现 peer_user 竟然等于当前登录用户，说明这很可能是“对端视角 DTO”，
+    //    会先把标题相关字段清空，避免列表短暂显示成“自己和自己聊天”；
+    // 3. 最后再按当前登录用户视角回拉一次 conversation detail，把摘要纠正成
+    //    当前客户端真正应该展示的样子。
     const QJsonValue conversationValue =
         data.value(QStringLiteral("conversation"));
     if (!conversationValue.isObject())
@@ -2202,15 +2231,89 @@ void ConversationManager::handleConversationCreatedEvent(
         return;
     }
 
+    const QString currentUser = currentUserId().trimmed();
+    if (!currentUser.isEmpty() &&
+        conversation.conversationType == QStringLiteral("direct") &&
+        conversation.peerUser.userId.trimmed() == currentUser)
+    {
+        // direct 私聊的 peer_user 理论上不应该等于当前登录用户。
+        // 一旦出现这种情况，通常说明服务端推来的还是“创建者视角”。
+        // 这里先把会污染 UI 的标题 / 头像字段清空，后续再由 detail 回拉纠正。
+        conversation.peerUser.userId.clear();
+        conversation.peerUser.account.clear();
+        conversation.peerUser.nickname.clear();
+        conversation.peerUser.avatarUrl.clear();
+    }
+
     m_conversationListModel->upsertConversation(conversation);
     ensureState(conversation.conversationId);
     emit conversationListUpdated();
+    refreshConversationSummaryFromServer(conversation.conversationId);
 
     CHATCLIENT_LOG_INFO("conversation.manager")
         << "已接入实时会话创建事件，conversation_id="
         << conversation.conversationId
         << " peer_user_id="
         << conversation.peerUser.userId;
+}
+
+void ConversationManager::refreshConversationSummaryFromServer(
+    const QString &conversationId)
+{
+    if (!m_conversationApiClient || !m_authService ||
+        !m_authService->hasActiveSession())
+    {
+        return;
+    }
+
+    const QString trimmedConversationId = conversationId.trimmed();
+    if (trimmedConversationId.isEmpty())
+    {
+        return;
+    }
+
+    const QString accessToken =
+        m_authService->currentSession().accessToken.trimmed();
+    if (accessToken.isEmpty())
+    {
+        return;
+    }
+
+    // `conversation.created` 当前更适合作为“增量提示”而不是最终真相：
+    // 客户端拿到会话 ID 后，再按自己视角回拉 detail，就能把会话标题、
+    // 头像、未读数和 last_read_seq 修正成真正适合当前用户展示的值。
+    m_conversationApiClient->fetchConversationDetail(
+        accessToken,
+        trimmedConversationId,
+        [this, trimmedConversationId](
+            const chatclient::dto::conversation::ConversationDetailResponseDto
+                &response) {
+            const chatclient::dto::conversation::ConversationSummaryDto summary =
+                conversationSummaryFromDetail(response.conversation);
+            m_conversationListModel->upsertConversation(summary);
+            ensureState(summary.conversationId);
+            emit conversationListUpdated();
+
+            CHATCLIENT_LOG_INFO("conversation.manager")
+                << "已按当前用户视角纠正会话摘要，conversation_id="
+                << trimmedConversationId
+                << " peer_user_id="
+                << summary.peerUser.userId;
+        },
+        [trimmedConversationId](
+            const chatclient::dto::conversation::ApiErrorDto &error) {
+            CHATCLIENT_LOG_WARN("conversation.manager")
+                << "按当前用户视角刷新会话摘要失败，conversation_id="
+                << trimmedConversationId
+                << " request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+        });
 }
 
 void ConversationManager::handleFriendRealtimeEvent(const QString &route)

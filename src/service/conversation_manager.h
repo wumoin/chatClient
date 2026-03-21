@@ -395,6 +395,18 @@ class ConversationManager : public QObject
     void handleRealtimeNewEvent(const QString &route, const QJsonObject &data);
     void handleMessageCreatedEvent(const QJsonObject &data);
     void handleConversationCreatedEvent(const QJsonObject &data);
+    /**
+     * @brief 按当前登录用户视角重新拉取一份会话详情，并覆盖本地摘要。
+     *
+     * 这条兜底链路主要用于修正 `conversation.created` 这类视角敏感实时事件：
+     * - 服务端若推来的是“另一个成员视角”的摘要，`peer_user / unread_count`
+     *   之类字段可能不适合当前客户端直接展示；
+     * - 客户端收到事件后再按自己视角拉一份 detail，就能把本地会话列表纠正回
+     *   当前登录用户真正应该看到的标题、头像和未读状态。
+     *
+     * @param conversationId 目标会话 ID。
+     */
+    void refreshConversationSummaryFromServer(const QString &conversationId);
     void handleFriendRealtimeEvent(const QString &route);
     MessageItem buildPendingImageMessageItem(
         const PendingImageMessage &pending) const;
