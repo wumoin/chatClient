@@ -84,6 +84,19 @@ public:
     QUrl avatarTempUploadUrl() const;
 
     /**
+     * @brief 返回聊天附件上传接口完整地址。
+     * @return 解析 `base_url + file_upload_path` 后得到的完整上传 URL。
+     */
+    QUrl fileUploadUrl() const;
+
+    /**
+     * @brief 返回指定附件下载接口完整地址。
+     * @param attachmentId 目标附件 ID。
+     * @return 将路径模板中的 `{attachment_id}` 替换后得到的完整下载 URL。
+     */
+    QUrl fileDownloadUrl(const QString &attachmentId) const;
+
+    /**
      * @brief 返回指定用户头像文件接口完整地址。
      * @param userId 目标用户 ID。
      * @return 将路径模板中的 `{user_id}` 替换后得到的完整头像 URL。
@@ -297,6 +310,8 @@ private:
     QString loginPath_;
     QString logoutPath_;
     QString avatarTempUploadPath_;
+    QString fileUploadPath_;
+    QString fileDownloadPathTemplate_;
     QString userAvatarPathTemplate_;
     QString userSearchPath_;
     QString friendListPath_;

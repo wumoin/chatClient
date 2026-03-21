@@ -90,6 +90,18 @@ QUrl AppConfig::avatarTempUploadUrl() const
     return httpBaseUrl_.resolved(QUrl(avatarTempUploadPath_));
 }
 
+QUrl AppConfig::fileUploadUrl() const
+{
+    return httpBaseUrl_.resolved(QUrl(fileUploadPath_));
+}
+
+QUrl AppConfig::fileDownloadUrl(const QString &attachmentId) const
+{
+    QString resolvedPath = fileDownloadPathTemplate_;
+    resolvedPath.replace(QStringLiteral("{attachment_id}"), attachmentId);
+    return httpBaseUrl_.resolved(QUrl(resolvedPath));
+}
+
 QUrl AppConfig::userAvatarUrl(const QString &userId) const
 {
     QString resolvedPath = userAvatarPathTemplate_;
@@ -329,6 +341,14 @@ bool AppConfig::load(QString *errorMessage)
         !readRequiredString(httpValue.toObject(),
                             QStringLiteral("avatar_temp_upload_path"),
                             &avatarTempUploadPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("file_upload_path"),
+                            &fileUploadPath_,
+                            errorMessage) ||
+        !readRequiredString(httpValue.toObject(),
+                            QStringLiteral("file_download_path_template"),
+                            &fileDownloadPathTemplate_,
                             errorMessage) ||
         !readRequiredString(httpValue.toObject(),
                             QStringLiteral("user_avatar_path_template"),
