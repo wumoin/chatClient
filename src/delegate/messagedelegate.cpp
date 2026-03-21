@@ -68,6 +68,14 @@ QFont timeFont(const QFont &base)
     return font;
 }
 
+QFont transferStatusFont(const QFont &base)
+{
+    QFont font(base);
+    font.setPixelSize(12);
+    font.setWeight(QFont::DemiBold);
+    return font;
+}
+
 QString fallbackText(const QModelIndex &index)
 {
     // 复制与命中逻辑优先使用 TextRole：
@@ -85,6 +93,12 @@ MessageType messageTypeFromIndex(const QModelIndex &index)
     // model 里用 int role 暴露消息类型，这里统一转回枚举，后续布局和绘制都复用这个入口。
     return static_cast<MessageType>(
         index.data(MessageModel::MessageTypeRole).toInt());
+}
+
+MessageTransferState transferStateFromIndex(const QModelIndex &index)
+{
+    return static_cast<MessageTransferState>(
+        index.data(MessageModel::TransferStateRole).toInt());
 }
 
 QString messageBodyText(const QModelIndex &index)
@@ -633,12 +647,18 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     const QString timeText = index.data(MessageModel::TimeRole).toString();
     const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
     const MessageType messageType = messageTypeFromIndex(index);
+    const MessageTransferState transferState = transferStateFromIndex(index);
+    const int transferProgress =
+        index.data(MessageModel::TransferProgressRole).toInt();
+    const QString transferStatusText =
+        index.data(MessageModel::TransferStatusTextRole).toString().trimmed();
     const QString imageLocalPath =
         index.data(MessageModel::ImageLocalPathRole).toString().trimmed();
 
     const QFont aFont = authorFont(option.font);
     const QFont mFont = messageFont(option.font);
     const QFont tFont = timeFont(option.font);
+    const QFont statusFont = transferStatusFont(option.font);
     const BubbleLayout layout =
         buildBubbleLayout(option, index, author, text, timeText, fromSelf);
 
@@ -680,6 +700,59 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
                               QStringLiteral("图片"));
         }
         painter->restore();
+
+        if (transferState != MessageTransferState::None)
+        {
+            // 图片消息在上传中 / 发送中 / 失败时，直接在图片区域叠一层状态遮罩。
+            // 这样用户不需要切出会话，也能一眼看出当前这张图有没有真的发出去。
+            QPainterPath overlayPath;
+            overlayPath.addRoundedRect(layout.imageRect, 10, 10);
+
+            painter->save();
+            painter->setClipPath(overlayPath);
+            const QColor overlayColor =
+                transferState == MessageTransferState::Failed
+                    ? QColor(20, 33, 52, 168)
+                    : QColor(20, 33, 52, 112);
+            painter->fillRect(layout.imageRect, overlayColor);
+
+            if ((transferState == MessageTransferState::Uploading ||
+                 transferState == MessageTransferState::Sending) &&
+                transferProgress >= 0)
+            {
+                const QRect trackRect(
+                    layout.imageRect.left() + 18,
+                    layout.imageRect.bottom() - 18,
+                    qMax(24, layout.imageRect.width() - 36),
+                    6);
+                const int progressWidth = qBound(
+                    0,
+                    static_cast<int>((trackRect.width() * transferProgress) /
+                                     100.0),
+                    trackRect.width());
+                const QRect fillRect(trackRect.left(),
+                                     trackRect.top(),
+                                     progressWidth,
+                                     trackRect.height());
+
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(QColor(255, 255, 255, 72));
+                painter->drawRoundedRect(trackRect, 3, 3);
+                painter->setBrush(QColor(QStringLiteral("#dcecff")));
+                painter->drawRoundedRect(fillRect, 3, 3);
+            }
+            painter->restore();
+
+            painter->save();
+            painter->setFont(statusFont);
+            painter->setPen(QColor(QStringLiteral("#ffffff")));
+            const QRect statusRect =
+                layout.imageRect.adjusted(18, 14, -18, -28);
+            painter->drawText(statusRect,
+                              Qt::AlignCenter | Qt::TextWordWrap,
+                              transferStatusText);
+            painter->restore();
+        }
 
         if (!layout.messageRect.isEmpty() && !text.isEmpty())
         {

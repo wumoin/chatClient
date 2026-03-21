@@ -1,5 +1,6 @@
 #include "service/conversation_manager.h"
 
+#include "api/file_api_client.h"
 #include "log/app_logger.h"
 #include "model/conversationlistmodel.h"
 #include "model/messagemodel.h"
@@ -7,9 +8,17 @@
 #include "service/auth_service.h"
 #include "ws/chat_ws_client.h"
 
+#include <QBuffer>
+#include <QCryptographicHash>
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QImageReader>
+#include <QLocale>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <QUuid>
+#include <QUrl>
 #include <functional>
 #include <memory>
 
@@ -45,6 +54,79 @@ QString messagePreview(const chatclient::dto::conversation::ConversationMessageD
     }
 
     return QStringLiteral("[未知消息]");
+}
+
+QString localizeAttachmentUploadError(
+    const chatclient::dto::file::ApiErrorDto &error)
+{
+    // 这里优先按“更具体的服务端 message”做细分，再回退到 error code 级别。
+    // 原因是 40001 当前承载了多种非法参数场景，如果只看 error code，
+    // 用户在“文件过大”和“普通参数错误”之间拿不到足够清晰的提示。
+    if (error.message == QStringLiteral("file size must not exceed 1 GB") ||
+        error.message == QStringLiteral("附件大小不能超过 1 GB"))
+    {
+        return QStringLiteral("图片大小不能超过 1 GB");
+    }
+
+    switch (error.errorCode)
+    {
+    case 40102:
+        return QStringLiteral("登录状态已失效");
+    case 40001:
+        return QStringLiteral("图片上传参数不合法");
+    default:
+        break;
+    }
+
+    return QStringLiteral("图片上传失败");
+}
+
+QString localizeImageSendAckError(const int code, const QString &message)
+{
+    switch (code)
+    {
+    case 40102:
+        return QStringLiteral("登录状态已失效");
+    case 40400:
+        return QStringLiteral("目标会话不存在");
+    case 40001:
+        return QStringLiteral("图片消息参数不合法");
+    default:
+        break;
+    }
+
+    if (!message.trimmed().isEmpty())
+    {
+        return QStringLiteral("图片发送失败");
+    }
+
+    return QStringLiteral("图片发送失败");
+}
+
+QString uploadProgressStatusText(const qint64 bytesSent, const qint64 bytesTotal)
+{
+    if (bytesTotal > 0)
+    {
+        const int progress = qBound(
+            0,
+            static_cast<int>((bytesSent * 100) / bytesTotal),
+            100);
+        return QStringLiteral("上传中 %1%").arg(progress);
+    }
+
+    return QStringLiteral("上传中 %1")
+        .arg(QLocale().formattedDataSize(qMax<qint64>(0, bytesSent)));
+}
+
+int optionalIntFromJson(const QJsonObject &object, const QString &key)
+{
+    const QJsonValue value = object.value(key);
+    return value.isDouble() ? value.toInt() : 0;
+}
+
+QString normalizedRemoteImageUrl(const QString &remoteUrl)
+{
+    return remoteUrl.trimmed();
 }
 
 QString displayPeerName(
@@ -89,8 +171,22 @@ QVector<MessageItem> toMessageItems(
 
         if (message.messageType == QStringLiteral("image")) {
             item.messageType = MessageType::Image;
+            item.text =
+                message.content.value(QStringLiteral("caption")).toString();
+            item.image.width =
+                optionalIntFromJson(message.content,
+                                    QStringLiteral("width"));
+            item.image.height =
+                optionalIntFromJson(message.content,
+                                    QStringLiteral("height"));
             item.image.remoteUrl =
                 message.content.value(QStringLiteral("url")).toString();
+            if (item.image.remoteUrl.trimmed().isEmpty())
+            {
+                item.image.remoteUrl =
+                    message.content.value(QStringLiteral("download_url"))
+                        .toString();
+            }
         } else if (message.messageType == QStringLiteral("file")) {
             item.messageType = MessageType::File;
             item.file.fileName =
@@ -115,6 +211,7 @@ QVector<MessageItem> toMessageItems(
 ConversationManager::ConversationManager(QObject *parent)
     : QObject(parent),
       m_conversationApiClient(new chatclient::api::ConversationApiClient(this)),
+      m_fileApiClient(new chatclient::api::FileApiClient(this)),
       m_chatWsClient(new chatclient::ws::ChatWsClient(this)),
       m_conversationListModel(new chatclient::model::ConversationListModel(this)),
       m_messageModelRegistry(new MessageModelRegistry(this))
@@ -155,6 +252,10 @@ ConversationManager::ConversationManager(QObject *parent)
             &chatclient::ws::ChatWsClient::ackReceived,
             this,
             &ConversationManager::handleRealtimeAckEvent);
+    connect(m_fileApiClient,
+            &chatclient::api::FileApiClient::uploadProgressChanged,
+            this,
+            &ConversationManager::handleAttachmentUploadProgress);
 }
 
 void ConversationManager::setAuthService(
@@ -449,24 +550,35 @@ void ConversationManager::applyConversationMessagesSnapshot(
         peerDisplay = displayPeerName(conversation);
     }
 
-    m_messageModelRegistry->replaceMessageItems(
-        conversationId,
-        toMessageItems(
-            response.items,
-            currentUserId,
-            [currentUserId, peerDisplay](
-                const chatclient::dto::conversation::ConversationMessageDto
-                    &message) {
-                if (message.senderId == currentUserId) {
-                    return QStringLiteral("我");
-                }
+    QVector<MessageItem> items = toMessageItems(
+        response.items,
+        currentUserId,
+        [currentUserId, peerDisplay](
+            const chatclient::dto::conversation::ConversationMessageDto
+                &message) {
+            if (message.senderId == currentUserId) {
+                return QStringLiteral("我");
+            }
 
-                if (!peerDisplay.trimmed().isEmpty()) {
-                    return peerDisplay;
-                }
+            if (!peerDisplay.trimmed().isEmpty()) {
+                return peerDisplay;
+            }
 
-                return message.senderId;
-            }));
+            return message.senderId;
+        });
+
+    // 历史消息里如果已经有命中的本地图片缓存，就在整批替换 model 之前先把
+    // localPath 补进消息项，这样视图第一次绑定时就能直接画出缩略图。
+    for (MessageItem &item : items)
+    {
+        applyCachedImageLocalPath(&item);
+    }
+
+    m_messageModelRegistry->replaceMessageItems(conversationId, items);
+
+    // 对于本地还没有缓存的正式图片，这里再统一发起一次异步下载。
+    // 下载完成后只局部刷新 image 相关字段，不覆盖整条消息。
+    ensureRemoteImagesAvailable(items);
 
     ConversationRuntimeState &state = ensureState(conversationId);
     state.initialized = true;
@@ -497,22 +609,146 @@ void ConversationManager::appendLocalTextMessage(const QString &conversationId,
     }
 }
 
-bool ConversationManager::appendLocalImageMessage(const QString &conversationId,
-                                                  const QString &localPath)
+MessageItem ConversationManager::buildPendingImageMessageItem(
+    const PendingImageMessage &pending) const
 {
-    // 这条路径只做“本地图片预览”：
-    // 图片先直接插入当前会话的 MessageModel，等后面接入正式上传协议再升级为服务端消息。
+    // 这条辅助函数把“图片发送中的运行时状态”统一投影成 MessageItem，
+    // 这样上传进度、发送中、失败态都能复用 MessageModel 现有的 upsert 机制。
+    MessageItem item;
+    item.conversationId = pending.conversationId;
+    item.messageId = pending.messageId;
+    item.clientMessageId = pending.clientMessageId;
+    item.seq = pending.seq;
+    item.author = QStringLiteral("我");
+    item.text = pending.caption;
+    item.timeText = messageTimeText(
+        pending.createdAtMs > 0 ? pending.createdAtMs : pending.sentAtMs);
+    item.fromSelf = true;
+    item.messageType = MessageType::Image;
+    item.image.localPath = pending.localPath;
+    item.image.width = pending.imageWidth;
+    item.image.height = pending.imageHeight;
+    item.transferState = pending.transferState;
+    item.transferProgress = pending.transferProgress;
+    item.transferStatusText = pending.transferStatusText;
+    return item;
+}
+
+void ConversationManager::upsertPendingImageMessage(
+    const PendingImageMessage &pending)
+{
+    m_messageModelRegistry->upsertMessageItem(
+        pending.conversationId,
+        buildPendingImageMessageItem(pending));
+}
+
+void ConversationManager::markPendingImageMessageFailed(
+    const QString &clientMessageId,
+    const QString &statusText)
+{
+    auto it =
+        m_pendingImageMessagesByClientMessageId.find(clientMessageId.trimmed());
+    if (it == m_pendingImageMessagesByClientMessageId.end())
+    {
+        return;
+    }
+
+    it->transferState = MessageTransferState::Failed;
+    it->transferProgress = -1;
+    it->transferStatusText =
+        statusText.trimmed().isEmpty() ? QStringLiteral("图片发送失败")
+                                       : statusText.trimmed();
+    upsertPendingImageMessage(*it);
+
+    chatclient::dto::conversation::ConversationSummaryDto conversation;
+    if (m_conversationListModel->conversationById(it->conversationId,
+                                                  &conversation))
+    {
+        conversation.lastMessagePreview = QStringLiteral("[图片发送失败]");
+        conversation.hasLastMessageAtMs = true;
+        conversation.lastMessageAtMs = it->sentAtMs;
+        conversation.unreadCount = 0;
+        conversation.lastReadSeq =
+            qMax(conversation.lastReadSeq, conversation.lastMessageSeq);
+        m_conversationListModel->upsertConversation(conversation);
+        emit conversationListUpdated();
+    }
+
+    removePendingImageMessage(it.key());
+}
+
+void ConversationManager::removePendingImageMessage(
+    const QString &clientMessageId)
+{
+    const QString trimmedClientMessageId = clientMessageId.trimmed();
+    if (trimmedClientMessageId.isEmpty())
+    {
+        return;
+    }
+
+    // 三张表里真正稳定的是 client_message_id，其余 request_id 映射都要一起清掉，
+    // 避免后续其它异步回调再命中一条已经终态化的任务。
+    m_pendingImageMessagesByClientMessageId.remove(trimmedClientMessageId);
+
+    for (auto it = m_pendingImageClientIdsByUploadRequestId.begin();
+         it != m_pendingImageClientIdsByUploadRequestId.end();)
+    {
+        if (it.value() == trimmedClientMessageId)
+        {
+            it = m_pendingImageClientIdsByUploadRequestId.erase(it);
+            continue;
+        }
+        ++it;
+    }
+
+    for (auto it = m_pendingImageClientIdsByWsRequestId.begin();
+         it != m_pendingImageClientIdsByWsRequestId.end();)
+    {
+        if (it.value() == trimmedClientMessageId)
+        {
+            it = m_pendingImageClientIdsByWsRequestId.erase(it);
+            continue;
+        }
+        ++it;
+    }
+}
+
+bool ConversationManager::sendImageMessage(const QString &conversationId,
+                                           const QString &localPath,
+                                           const QString &caption)
+{
+    // 图片发送链路和文本消息不同：
+    // 1. 先本地插入一条“上传中”的图片占位消息；
+    // 2. 再走 HTTP 临时附件上传；
+    // 3. 上传成功后再发 `message.send_image`；
+    // 4. 最终由 ack/new 把本地占位消息收敛成正式消息。
+    if (!m_authService || !m_authService->hasActiveSession() || !m_fileApiClient)
+    {
+        return false;
+    }
+
+    if (!m_chatWsClient || !m_chatWsClient->isAuthenticated())
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "拒绝发送图片消息，实时通道当前不可用，conversation_id="
+            << conversationId;
+        return false;
+    }
+
     const QString trimmedConversationId = conversationId.trimmed();
     const QString trimmedLocalPath = localPath.trimmed();
-    if (trimmedConversationId.isEmpty() || trimmedLocalPath.isEmpty()) {
+    const QString trimmedCaption = caption.trimmed();
+    if (trimmedConversationId.isEmpty() || trimmedLocalPath.isEmpty())
+    {
         return false;
     }
 
     QImageReader reader(trimmedLocalPath);
     reader.setAutoTransform(true);
-    if (!reader.canRead()) {
+    if (!reader.canRead())
+    {
         CHATCLIENT_LOG_WARN("conversation.manager")
-            << "本地图片消息追加失败，图片文件不可读取，conversation_id="
+            << "图片消息发送失败，图片文件不可读取，conversation_id="
             << trimmedConversationId
             << " local_path="
             << trimmedLocalPath;
@@ -520,11 +756,13 @@ bool ConversationManager::appendLocalImageMessage(const QString &conversationId,
     }
 
     QSize imageSize = reader.size();
-    if (!imageSize.isValid()) {
+    if (!imageSize.isValid())
+    {
         const QImage image = reader.read();
-        if (image.isNull()) {
+        if (image.isNull())
+        {
             CHATCLIENT_LOG_WARN("conversation.manager")
-                << "本地图片消息追加失败，无法解析图片尺寸，conversation_id="
+                << "图片消息发送失败，无法解析图片尺寸，conversation_id="
                 << trimmedConversationId
                 << " local_path="
                 << trimmedLocalPath
@@ -535,16 +773,22 @@ bool ConversationManager::appendLocalImageMessage(const QString &conversationId,
         imageSize = image.size();
     }
 
-    const qint64 createdAtMs = QDateTime::currentMSecsSinceEpoch();
-    m_messageModelRegistry->addImageMessage(trimmedConversationId,
-                                            QStringLiteral("我"),
-                                            messageTimeText(createdAtMs),
-                                            true,
-                                            trimmedLocalPath,
-                                            QString(),
-                                            imageSize.width(),
-                                            imageSize.height(),
-                                            QString());
+    PendingImageMessage pending;
+    pending.conversationId = trimmedConversationId;
+    pending.clientMessageId =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    pending.localPath = trimmedLocalPath;
+    pending.caption = trimmedCaption;
+    pending.imageWidth = imageSize.width();
+    pending.imageHeight = imageSize.height();
+    pending.sentAtMs = QDateTime::currentMSecsSinceEpoch();
+    pending.transferState = MessageTransferState::Uploading;
+    pending.transferProgress = 0;
+    pending.transferStatusText = QStringLiteral("上传中 0%");
+
+    m_pendingImageMessagesByClientMessageId.insert(pending.clientMessageId,
+                                                   pending);
+    upsertPendingImageMessage(pending);
 
     ConversationRuntimeState &state = ensureState(trimmedConversationId);
     state.initialized = true;
@@ -553,9 +797,9 @@ bool ConversationManager::appendLocalImageMessage(const QString &conversationId,
     if (m_conversationListModel->conversationById(trimmedConversationId,
                                                   &conversation))
     {
-        conversation.lastMessagePreview = QStringLiteral("[图片消息]");
+        conversation.lastMessagePreview = QStringLiteral("[图片上传中]");
         conversation.hasLastMessageAtMs = true;
-        conversation.lastMessageAtMs = createdAtMs;
+        conversation.lastMessageAtMs = pending.sentAtMs;
         conversation.unreadCount = 0;
         conversation.lastReadSeq =
             qMax(conversation.lastReadSeq, conversation.lastMessageSeq);
@@ -563,15 +807,108 @@ bool ConversationManager::appendLocalImageMessage(const QString &conversationId,
         emit conversationListUpdated();
     }
 
+    const QString accessToken =
+        m_authService->currentSession().accessToken.trimmed();
+    const QString uploadRequestId = m_fileApiClient->uploadAttachment(
+        accessToken,
+        trimmedLocalPath,
+        [this, clientMessageId = pending.clientMessageId](
+            const chatclient::dto::file::UploadAttachmentResponseDto &response) {
+            m_pendingImageClientIdsByUploadRequestId.remove(
+                response.requestId.trimmed());
+            auto it = m_pendingImageMessagesByClientMessageId.find(
+                clientMessageId);
+            if (it == m_pendingImageMessagesByClientMessageId.end())
+            {
+                return;
+            }
+
+            it->transferState = MessageTransferState::Sending;
+            it->transferProgress = 100;
+            it->transferStatusText = QStringLiteral("发送中");
+            upsertPendingImageMessage(*it);
+
+            QJsonObject data;
+            data.insert(QStringLiteral("conversation_id"), it->conversationId);
+            data.insert(QStringLiteral("client_message_id"),
+                        it->clientMessageId);
+            data.insert(QStringLiteral("attachment_upload_key"),
+                        response.upload.attachmentUploadKey);
+            if (!it->caption.isEmpty())
+            {
+                data.insert(QStringLiteral("caption"), it->caption);
+            }
+
+            const QString wsRequestId = m_chatWsClient->sendBusinessEvent(
+                QStringLiteral("message.send_image"),
+                data);
+            if (wsRequestId.trimmed().isEmpty())
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "图片临时上传成功，但发送 ws.send(message.send_image) 失败，client_message_id="
+                    << it->clientMessageId
+                    << " upload_request_id="
+                    << response.requestId;
+                markPendingImageMessageFailed(it->clientMessageId,
+                                              QStringLiteral("图片发送失败"));
+                return;
+            }
+
+            m_pendingImageClientIdsByWsRequestId.insert(wsRequestId,
+                                                        it->clientMessageId);
+
+            CHATCLIENT_LOG_INFO("conversation.manager")
+                << "图片临时上传成功，准备发送图片消息，conversation_id="
+                << it->conversationId
+                << " client_message_id="
+                << it->clientMessageId
+                << " upload_key="
+                << response.upload.attachmentUploadKey
+                << " ws_request_id="
+                << wsRequestId;
+        },
+        [this, clientMessageId = pending.clientMessageId](
+            const chatclient::dto::file::ApiErrorDto &error) {
+            m_pendingImageClientIdsByUploadRequestId.remove(
+                error.requestId.trimmed());
+            CHATCLIENT_LOG_WARN("conversation.manager")
+                << "图片临时上传失败，request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message;
+            markPendingImageMessageFailed(
+                clientMessageId,
+                localizeAttachmentUploadError(error));
+        });
+
+    if (uploadRequestId.trimmed().isEmpty())
+    {
+        markPendingImageMessageFailed(pending.clientMessageId,
+                                      QStringLiteral("图片上传失败"));
+        return false;
+    }
+
+    if (m_pendingImageMessagesByClientMessageId.contains(
+            pending.clientMessageId))
+    {
+        m_pendingImageClientIdsByUploadRequestId.insert(
+            uploadRequestId,
+            pending.clientMessageId);
+    }
+
     CHATCLIENT_LOG_INFO("conversation.manager")
-        << "已追加本地图片消息，conversation_id="
+        << "已启动图片消息发送，conversation_id="
         << trimmedConversationId
+        << " client_message_id="
+        << pending.clientMessageId
+        << " upload_request_id="
+        << uploadRequestId
         << " local_path="
-        << trimmedLocalPath
-        << " width="
-        << imageSize.width()
-        << " height="
-        << imageSize.height();
+        << trimmedLocalPath;
     return true;
 }
 
@@ -673,6 +1010,12 @@ void ConversationManager::handleRealtimeAckEvent(const QString &route,
         return;
     }
 
+    if (route == QStringLiteral("message.send_image"))
+    {
+        handleMessageSendImageAck(ok, code, message, data, requestId);
+        return;
+    }
+
     CHATCLIENT_LOG_DEBUG("conversation.manager")
         << "忽略当前未接入的实时确认业务路由，route=" << route;
 }
@@ -759,6 +1102,130 @@ void ConversationManager::handleMessageSendTextAck(
         << seq;
 }
 
+void ConversationManager::handleMessageSendImageAck(
+    const bool ok,
+    const int code,
+    const QString &message,
+    const QJsonObject &data,
+    const QString &requestId)
+{
+    // 图片 ack 的职责和文本类似：
+    // - 把“发送中”占位消息升级为服务端已经受理的正式消息；
+    // - 真正的最终内容（例如 download_url）仍优先以随后 `message.created` 为准。
+    const QString clientMessageId =
+        m_pendingImageClientIdsByWsRequestId.take(requestId.trimmed());
+    if (clientMessageId.isEmpty())
+    {
+        return;
+    }
+
+    auto it = m_pendingImageMessagesByClientMessageId.find(clientMessageId);
+    if (it == m_pendingImageMessagesByClientMessageId.end())
+    {
+        return;
+    }
+
+    if (!ok)
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "图片消息发送确认失败，request_id="
+            << requestId
+            << " code="
+            << code
+            << " message="
+            << message;
+        markPendingImageMessageFailed(
+            clientMessageId,
+            localizeImageSendAckError(code, message));
+        return;
+    }
+
+    const QString conversationId =
+        data.value(QStringLiteral("conversation_id")).toString().trimmed();
+    const QString messageId =
+        data.value(QStringLiteral("message_id")).toString().trimmed();
+    const qint64 seq =
+        data.value(QStringLiteral("seq")).toVariant().toLongLong();
+    const qint64 createdAtMs =
+        data.value(QStringLiteral("created_at_ms")).toVariant().toLongLong();
+    if (conversationId.isEmpty() || messageId.isEmpty() || seq <= 0)
+    {
+        CHATCLIENT_LOG_WARN("conversation.manager")
+            << "图片消息发送确认缺少关键字段，request_id="
+            << requestId;
+        markPendingImageMessageFailed(clientMessageId,
+                                      QStringLiteral("图片发送失败"));
+        return;
+    }
+
+    it->conversationId = conversationId;
+    it->messageId = messageId;
+    it->seq = seq;
+    it->createdAtMs = createdAtMs > 0 ? createdAtMs : it->sentAtMs;
+    it->transferState = MessageTransferState::None;
+    it->transferProgress = -1;
+    it->transferStatusText.clear();
+    upsertPendingImageMessage(*it);
+
+    ConversationRuntimeState &state = ensureState(conversationId);
+    state.initialized = true;
+    state.lastLoadedMaxSeq = qMax(state.lastLoadedMaxSeq, seq);
+
+    chatclient::dto::conversation::ConversationMessageDto messageDto;
+    messageDto.messageId = messageId;
+    messageDto.conversationId = conversationId;
+    messageDto.seq = seq;
+    messageDto.senderId = currentUserId();
+    messageDto.hasClientMessageId = true;
+    messageDto.clientMessageId = it->clientMessageId;
+    messageDto.messageType = QStringLiteral("image");
+    messageDto.createdAtMs = it->createdAtMs;
+    messageDto.content.insert(QStringLiteral("caption"), it->caption);
+    updateConversationSummaryFromMessage(messageDto,
+                                         QStringLiteral("[图片消息]"));
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "图片消息发送确认已接入，conversation_id="
+        << conversationId
+        << " message_id="
+        << messageId
+        << " seq="
+        << seq
+        << " client_message_id="
+        << it->clientMessageId;
+}
+
+void ConversationManager::handleAttachmentUploadProgress(
+    const QString &requestId,
+    const qint64 bytesSent,
+    const qint64 bytesTotal)
+{
+    // 上传进度信号来自 FileApiClient，而图片消息 UI 行是按 client_message_id 建模的；
+    // 因此这里先做 request_id -> client_message_id 的映射，再更新对应气泡状态。
+    const QString clientMessageId =
+        m_pendingImageClientIdsByUploadRequestId.value(requestId.trimmed());
+    if (clientMessageId.isEmpty())
+    {
+        return;
+    }
+
+    auto it = m_pendingImageMessagesByClientMessageId.find(clientMessageId);
+    if (it == m_pendingImageMessagesByClientMessageId.end() ||
+        it->transferState != MessageTransferState::Uploading)
+    {
+        return;
+    }
+
+    it->transferProgress =
+        bytesTotal > 0
+            ? qBound(0,
+                     static_cast<int>((bytesSent * 100) / bytesTotal),
+                     100)
+            : -1;
+    it->transferStatusText = uploadProgressStatusText(bytesSent, bytesTotal);
+    upsertPendingImageMessage(*it);
+}
+
 void ConversationManager::handleRealtimeNewEvent(const QString &route,
                                                  const QJsonObject &data)
 {
@@ -830,8 +1297,41 @@ void ConversationManager::handleMessageCreatedEvent(const QJsonObject &data)
         });
     if (!items.isEmpty())
     {
-        m_messageModelRegistry->upsertMessageItem(message.conversationId,
-                                                  items.constFirst());
+        MessageItem item = items.constFirst();
+
+        // 如果这是当前客户端刚发出去的图片消息，就尽量把本地图片路径继续保留下来。
+        // 这样即使服务端只回 download_url，本地也不会因为还没单独下载附件而退回到占位图。
+        if (message.messageType == QStringLiteral("image") &&
+            message.hasClientMessageId)
+        {
+            const auto pendingIt =
+                m_pendingImageMessagesByClientMessageId.constFind(
+                    message.clientMessageId);
+            if (pendingIt != m_pendingImageMessagesByClientMessageId.constEnd())
+            {
+                item.image.localPath = pendingIt->localPath;
+                if (item.image.width <= 0)
+                {
+                    item.image.width = pendingIt->imageWidth;
+                }
+                if (item.image.height <= 0)
+                {
+                    item.image.height = pendingIt->imageHeight;
+                }
+                if (item.text.trimmed().isEmpty())
+                {
+                    item.text = pendingIt->caption;
+                }
+            }
+        }
+
+        // 对于别人刚发来的正式图片消息，或者本机重连后重新补进来的正式图片消息，
+        // 这里先尝试命中现有本地缓存。命中则立即可见；未命中则在 upsert 之后
+        // 再异步下载并局部刷新图片字段。
+        applyCachedImageLocalPath(&item);
+
+        m_messageModelRegistry->upsertMessageItem(message.conversationId, item);
+        ensureRemoteImageAvailable(item);
     }
 
     ConversationRuntimeState &state = ensureState(message.conversationId);
@@ -851,6 +1351,12 @@ void ConversationManager::handleMessageCreatedEvent(const QJsonObject &data)
             continue;
         }
         ++it;
+    }
+
+    if (message.messageType == QStringLiteral("image") &&
+        !message.clientMessageId.isEmpty())
+    {
+        removePendingImageMessage(message.clientMessageId);
     }
 
     CHATCLIENT_LOG_INFO("conversation.manager")
@@ -908,6 +1414,256 @@ void ConversationManager::handleFriendRealtimeEvent(const QString &route)
         << "已接入实时好友事件，route=" << route;
 }
 
+void ConversationManager::applyCachedImageLocalPath(MessageItem *item) const
+{
+    if (!item || item->messageType != MessageType::Image)
+    {
+        return;
+    }
+
+    if (!item->image.localPath.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    const QString cachePath = remoteImageCacheFilePath(item->image.remoteUrl);
+    if (cachePath.isEmpty() || !QFileInfo::exists(cachePath))
+    {
+        return;
+    }
+
+    item->image.localPath = cachePath;
+
+    // 历史消息和 ws.new 里的图片尺寸通常来自服务端，但这里还是补一个本地兜底：
+    // 如果服务端暂时没带宽高，本地缓存命中时仍可从图片头信息里恢复布局尺寸。
+    if (item->image.width <= 0 || item->image.height <= 0)
+    {
+        QImageReader reader(cachePath);
+        reader.setAutoTransform(true);
+        const QSize imageSize = reader.size();
+        if (imageSize.isValid())
+        {
+            if (item->image.width <= 0)
+            {
+                item->image.width = imageSize.width();
+            }
+            if (item->image.height <= 0)
+            {
+                item->image.height = imageSize.height();
+            }
+        }
+    }
+}
+
+void ConversationManager::ensureRemoteImageAvailable(const MessageItem &item)
+{
+    if (item.messageType != MessageType::Image)
+    {
+        return;
+    }
+
+    if (!item.image.localPath.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    const QString remoteUrl = normalizedRemoteImageUrl(item.image.remoteUrl);
+    if (remoteUrl.isEmpty())
+    {
+        return;
+    }
+
+    MessageItem cachedItem = item;
+    applyCachedImageLocalPath(&cachedItem);
+    if (!cachedItem.image.localPath.trimmed().isEmpty())
+    {
+        MessageItem identity;
+        identity.messageId = item.messageId;
+        identity.clientMessageId = item.clientMessageId;
+        identity.seq = item.seq;
+        m_messageModelRegistry->updateImagePayload(item.conversationId,
+                                                   identity,
+                                                   cachedItem.image.localPath,
+                                                   cachedItem.image.width,
+                                                   cachedItem.image.height);
+        return;
+    }
+
+    if (!m_authService || !m_authService->hasActiveSession())
+    {
+        return;
+    }
+
+    RemoteImageHydrationTarget target;
+    target.conversationId = item.conversationId;
+    target.messageId = item.messageId;
+    target.clientMessageId = item.clientMessageId;
+    target.seq = item.seq;
+
+    QVector<RemoteImageHydrationTarget> &targets =
+        m_remoteImageTargetsByUrl[remoteUrl];
+    for (const auto &existing : targets)
+    {
+        if (existing.conversationId == target.conversationId &&
+            existing.messageId == target.messageId &&
+            existing.clientMessageId == target.clientMessageId &&
+            existing.seq == target.seq)
+        {
+            return;
+        }
+    }
+
+    const bool shouldStartDownload = targets.isEmpty();
+    targets.push_back(target);
+    if (!shouldStartDownload)
+    {
+        return;
+    }
+
+    const QString accessToken =
+        m_authService->currentSession().accessToken.trimmed();
+    m_fileApiClient->downloadAttachmentByUrl(
+        accessToken,
+        remoteUrl,
+        [this, remoteUrl](
+            const chatclient::dto::file::DownloadedAttachmentDto &downloaded) {
+            const QVector<RemoteImageHydrationTarget> targets =
+                m_remoteImageTargetsByUrl.take(remoteUrl);
+            if (targets.isEmpty())
+            {
+                return;
+            }
+
+            QBuffer buffer;
+            buffer.setData(downloaded.content);
+            if (!buffer.open(QIODevice::ReadOnly))
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "打开远端图片内存缓冲失败，remote_url=" << remoteUrl;
+                return;
+            }
+
+            QImageReader reader(&buffer);
+            reader.setAutoTransform(true);
+            if (!reader.canRead())
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "远端图片内容不可读，remote_url=" << remoteUrl;
+                return;
+            }
+
+            QSize imageSize = reader.size();
+            if (!imageSize.isValid())
+            {
+                const QImage image = reader.read();
+                if (image.isNull())
+                {
+                    CHATCLIENT_LOG_WARN("conversation.manager")
+                        << "解码远端图片失败，remote_url=" << remoteUrl;
+                    return;
+                }
+                imageSize = image.size();
+            }
+
+            const QString cachePath = remoteImageCacheFilePath(remoteUrl);
+            if (cachePath.isEmpty())
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "生成远端图片缓存路径失败，remote_url=" << remoteUrl;
+                return;
+            }
+
+            const QFileInfo cacheFileInfo(cachePath);
+            QDir cacheDir(cacheFileInfo.absolutePath());
+            if (!cacheDir.exists() && !cacheDir.mkpath(QStringLiteral(".")))
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "创建远端图片缓存目录失败，path="
+                    << cacheDir.absolutePath();
+                return;
+            }
+
+            QSaveFile cacheFile(cachePath);
+            if (!cacheFile.open(QIODevice::WriteOnly))
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "打开远端图片缓存文件失败，path=" << cachePath;
+                return;
+            }
+
+            if (cacheFile.write(downloaded.content) != downloaded.content.size())
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "写入远端图片缓存文件失败，path=" << cachePath;
+                return;
+            }
+
+            if (!cacheFile.commit())
+            {
+                CHATCLIENT_LOG_WARN("conversation.manager")
+                    << "提交远端图片缓存文件失败，path=" << cachePath;
+                return;
+            }
+
+            for (const auto &currentTarget : targets)
+            {
+                MessageItem identity;
+                identity.messageId = currentTarget.messageId;
+                identity.clientMessageId = currentTarget.clientMessageId;
+                identity.seq = currentTarget.seq;
+                m_messageModelRegistry->updateImagePayload(
+                    currentTarget.conversationId,
+                    identity,
+                    cachePath,
+                    imageSize.width(),
+                    imageSize.height());
+            }
+
+            CHATCLIENT_LOG_INFO("conversation.manager")
+                << "远端图片缓存完成并已回写消息模型，remote_url="
+                << remoteUrl
+                << " local_path="
+                << cachePath
+                << " target_count="
+                << targets.size();
+        },
+        [this, remoteUrl](
+            const chatclient::dto::file::ApiErrorDto &error) {
+            const QVector<RemoteImageHydrationTarget> targets =
+                m_remoteImageTargetsByUrl.take(remoteUrl);
+            CHATCLIENT_LOG_WARN("conversation.manager")
+                << "下载正式图片消息附件失败，remote_url="
+                << remoteUrl
+                << " request_id="
+                << error.requestId
+                << " http_status="
+                << error.httpStatus
+                << " error_code="
+                << error.errorCode
+                << " message="
+                << error.message
+                << " target_count="
+                << targets.size();
+        });
+
+    CHATCLIENT_LOG_INFO("conversation.manager")
+        << "开始下载正式图片消息附件，conversation_id="
+        << item.conversationId
+        << " message_id="
+        << item.messageId
+        << " remote_url="
+        << remoteUrl;
+}
+
+void ConversationManager::ensureRemoteImagesAvailable(
+    const QVector<MessageItem> &items)
+{
+    for (const MessageItem &item : items)
+    {
+        ensureRemoteImageAvailable(item);
+    }
+}
+
 void ConversationManager::resetConversationData()
 {
     // 登录态切换或登出后，要把会话列表、消息模型、运行时状态和 pending 发送全部清空，
@@ -916,6 +1672,10 @@ void ConversationManager::resetConversationData()
     m_messageModelRegistry->clearAll();
     m_runtimeStates.clear();
     m_pendingTextMessagesByRequestId.clear();
+    m_pendingImageMessagesByClientMessageId.clear();
+    m_pendingImageClientIdsByUploadRequestId.clear();
+    m_pendingImageClientIdsByWsRequestId.clear();
+    m_remoteImageTargetsByUrl.clear();
     m_loadedSessionKey.clear();
     m_bootstrapSessionKey.clear();
     m_bootstrapInProgress = false;
@@ -988,6 +1748,36 @@ QString ConversationManager::currentUserId() const
     }
 
     return m_authService->currentSession().user.userId;
+}
+
+QString ConversationManager::remoteImageCacheFilePath(
+    const QString &remoteUrl) const
+{
+    const QString normalizedUrl = normalizedRemoteImageUrl(remoteUrl);
+    if (normalizedUrl.isEmpty())
+    {
+        return QString();
+    }
+
+    QString cacheRoot =
+        QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    if (cacheRoot.trimmed().isEmpty())
+    {
+        cacheRoot =
+            QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    }
+    if (cacheRoot.trimmed().isEmpty())
+    {
+        cacheRoot = QDir::tempPath();
+    }
+
+    const QString fileKey = QString::fromLatin1(
+        QCryptographicHash::hash(normalizedUrl.toUtf8(),
+                                 QCryptographicHash::Sha256)
+            .toHex());
+    return QDir(cacheRoot)
+        .filePath(QStringLiteral("chatclient/message-images/%1.img")
+                      .arg(fileKey));
 }
 
 }  // namespace chatclient::service

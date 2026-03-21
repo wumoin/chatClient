@@ -848,7 +848,7 @@ QWidget *ChatWindow::createMessageContentPage()
     connect(m_messageFileButton,
             &QPushButton::clicked,
             this,
-            &ChatWindow::handleSendLocalImage);
+            &ChatWindow::handleSendImage);
 
     setConversationHeaderText(QStringLiteral("产品讨论组"),
                               QStringLiteral("3 人在线 · 需求评审中"));
@@ -1600,7 +1600,7 @@ void ChatWindow::handleSendMessage()
     m_messageEditor->clear();
 }
 
-void ChatWindow::handleSendLocalImage()
+void ChatWindow::handleSendImage()
 {
     if (!m_conversationManager)
     {
@@ -1616,28 +1616,45 @@ void ChatWindow::handleSendLocalImage()
         return;
     }
 
-    const QString localPath = QFileDialog::getOpenFileName(
+    const QStringList localPaths = QFileDialog::getOpenFileNames(
         this,
         QStringLiteral("选择图片"),
         QString(),
         QStringLiteral("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"));
-    if (localPath.trimmed().isEmpty())
+    if (localPaths.isEmpty())
     {
         return;
     }
 
-    if (!m_conversationManager->appendLocalImageMessage(m_currentConversationId,
-                                                        localPath))
+    int startedCount = 0;
+    for (const QString &localPath : localPaths)
+    {
+        if (m_conversationManager->sendImageMessage(m_currentConversationId,
+                                                    localPath))
+        {
+            ++startedCount;
+        }
+    }
+
+    if (startedCount <= 0)
     {
         setConversationComposerHintText(
-            QStringLiteral("本地图片追加失败，请确认文件是可读取的图片。"));
+            QStringLiteral("图片发送启动失败，请确认文件可读且实时通道可用。"));
         return;
     }
 
-    // 这里还是本地演示能力：
-    // 图片消息只追加到当前客户端 MessageModel，不会上行到服务端。
-    setConversationComposerHintText(
-        QStringLiteral("已在当前客户端追加一条本地图片消息，仅用于本地展示。"));
+    if (startedCount == 1)
+    {
+        setConversationComposerHintText(
+            QStringLiteral("图片已加入发送队列，正在上传。"));
+    }
+    else
+    {
+        setConversationComposerHintText(
+            QStringLiteral("已将 %1 张图片加入发送队列，正在并发上传。")
+                .arg(startedCount));
+    }
+
     if (m_messageListView)
     {
         m_messageListView->scrollToBottom();

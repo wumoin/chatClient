@@ -9,6 +9,11 @@ int messageTypeToInt(MessageType type)
     return static_cast<int>(type);
 }
 
+int transferStateToInt(MessageTransferState state)
+{
+    return static_cast<int>(state);
+}
+
 QString fallbackDisplayText(const MessageItem &item)
 {
     if (!item.text.isEmpty()) {
@@ -88,6 +93,12 @@ QVariant MessageModel::data(const QModelIndex &index, int role) const
         return item.file.remoteUrl;
     case FileSizeBytesRole:
         return item.file.sizeBytes;
+    case TransferStateRole:
+        return transferStateToInt(item.transferState);
+    case TransferProgressRole:
+        return item.transferProgress;
+    case TransferStatusTextRole:
+        return item.transferStatusText;
     default:
         return QVariant();
     }
@@ -113,6 +124,9 @@ QHash<int, QByteArray> MessageModel::roleNames() const
         {FileLocalPathRole, "fileLocalPath"},
         {FileRemoteUrlRole, "fileRemoteUrl"},
         {FileSizeBytesRole, "fileSizeBytes"},
+        {TransferStateRole, "transferState"},
+        {TransferProgressRole, "transferProgress"},
+        {TransferStatusTextRole, "transferStatusText"},
     };
 }
 
@@ -217,6 +231,56 @@ void MessageModel::clear()
     beginResetModel();
     m_messages.clear();
     endResetModel();
+}
+
+bool MessageModel::updateImagePayload(const MessageItem &identity,
+                                      const QString &localPath,
+                                      int width,
+                                      int height)
+{
+    const int row = findMessageRowByIdentity(identity);
+    if (row < 0)
+    {
+        return false;
+    }
+
+    MessageItem &existing = m_messages[row];
+    if (existing.messageType != MessageType::Image)
+    {
+        return false;
+    }
+
+    bool changed = false;
+    const QString trimmedLocalPath = localPath.trimmed();
+    if (!trimmedLocalPath.isEmpty() &&
+        existing.image.localPath != trimmedLocalPath)
+    {
+        existing.image.localPath = trimmedLocalPath;
+        changed = true;
+    }
+
+    if (width > 0 && existing.image.width != width)
+    {
+        existing.image.width = width;
+        changed = true;
+    }
+
+    if (height > 0 && existing.image.height != height)
+    {
+        existing.image.height = height;
+        changed = true;
+    }
+
+    if (!changed)
+    {
+        return false;
+    }
+
+    const QModelIndex changedIndex = index(row, 0);
+    emit dataChanged(changedIndex,
+                     changedIndex,
+                     {ImageLocalPathRole, ImageWidthRole, ImageHeightRole});
+    return true;
 }
 
 int MessageModel::findMessageRowByIdentity(const MessageItem &item) const

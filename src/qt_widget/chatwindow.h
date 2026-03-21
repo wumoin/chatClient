@@ -235,9 +235,9 @@ class ChatWindow : public QWidget
     void handleSendMessage();
 
     /**
-     * @brief 选择本地图片并以仅本地展示的形式追加到当前会话。
+     * @brief 选择一张或多张本地图片并发送到当前会话。
      */
-    void handleSendLocalImage();
+    void handleSendImage();
 
     /**
      * @brief 从好友详情页发起或复用一对一私聊会话。
@@ -321,7 +321,7 @@ class ChatWindow : public QWidget
     QTextEdit *m_messageEditor = nullptr;
     // 输入区“表情”按钮；当前属于占位入口，尚未接真实表情面板。
     QPushButton *m_messageEmojiButton = nullptr;
-    // 输入区“图片”按钮，用来选择本地图片并追加到当前消息模型。
+    // 输入区“图片”按钮：选择本地图片后会走真实上传与发送链路。
     QPushButton *m_messageFileButton = nullptr;
     // 输入区“发送”按钮，把当前输入框文本发到当前会话。
     QPushButton *m_messageSendButton = nullptr;

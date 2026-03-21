@@ -133,3 +133,17 @@ void MessageModelRegistry::addFileMessage(const QString &conversationId,
                                caption);
     }
 }
+
+bool MessageModelRegistry::updateImagePayload(const QString &conversationId,
+                                              const MessageItem &identity,
+                                              const QString &localPath,
+                                              int width,
+                                              int height)
+{
+    if (MessageModel *target = model(conversationId))
+    {
+        return target->updateImagePayload(identity, localPath, width, height);
+    }
+
+    return false;
+}

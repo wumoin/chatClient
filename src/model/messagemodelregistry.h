@@ -126,6 +126,20 @@ public:
                         const QString &remoteUrl = QString(),
                         qint64 sizeBytes = -1,
                         const QString &caption = QString());
+    /**
+     * @brief 只更新指定会话中某条图片消息的本地缓存路径与尺寸。
+     * @param conversationId 目标会话 ID。
+     * @param identity 用于定位目标消息的身份键。
+     * @param localPath 已下载到本地的图片缓存路径；为空时不更新路径。
+     * @param width 已知图片宽度；小于等于 0 时表示不更新。
+     * @param height 已知图片高度；小于等于 0 时表示不更新。
+     * @return true 表示命中并刷新了对应消息；false 表示目标消息还不在该会话 model 中。
+     */
+    bool updateImagePayload(const QString &conversationId,
+                            const MessageItem &identity,
+                            const QString &localPath,
+                            int width = -1,
+                            int height = -1);
 
 private:
     QHash<QString, MessageModel *> m_models;

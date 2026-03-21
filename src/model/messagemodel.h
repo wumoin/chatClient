@@ -16,6 +16,24 @@ enum class MessageType {
     File
 };
 
+// 消息传输状态。
+//
+// 当前主要服务于图片消息：
+// - 上传临时附件时显示 Uploading；
+// - HTTP 上传完成、等待 `message.send_image` ack/new 收敛时显示 Sending；
+// - 任一阶段失败时显示 Failed；
+// - 已经成为正式消息后回到 None。
+enum class MessageTransferState {
+    // 当前没有额外传输态，视为正式稳定消息。
+    None = 0,
+    // 正在通过 HTTP 上传临时附件。
+    Uploading,
+    // 上传已完成，正在等待 WS 业务确认或正式广播。
+    Sending,
+    // 上传或发送流程失败。
+    Failed
+};
+
 // 图片消息扩展字段。
 struct MessageImagePayload {
     // 本地缓存路径（可为空）。
@@ -64,6 +82,14 @@ struct MessageItem {
     MessageImagePayload image;
     // 文件消息的扩展字段（非文件消息时可忽略）。
     MessageFilePayload file;
+    // 当前消息的传输状态；正式稳定消息通常为 None。
+    MessageTransferState transferState = MessageTransferState::None;
+    // 当前传输进度百分比，取值约定为：
+    // - [0, 100]：已知进度；
+    // - -1：当前暂无可用百分比（例如只知道“发送中”）。
+    int transferProgress = -1;
+    // 直接提供给 delegate 展示的状态文案，例如“上传中 42%”“发送中”“上传失败”。
+    QString transferStatusText;
 };
 
 // 消息列表模型：
@@ -96,7 +122,10 @@ public:
         FileNameRole,
         FileLocalPathRole,
         FileRemoteUrlRole,
-        FileSizeBytesRole
+        FileSizeBytesRole,
+        TransferStateRole,
+        TransferProgressRole,
+        TransferStatusTextRole
     };
 
     /**
@@ -189,6 +218,27 @@ public:
      * @brief 清空当前模型中的全部消息。
      */
     void clear();
+    /**
+     * @brief 只更新某条图片消息的本地缓存路径与尺寸信息。
+     *
+     * 这个接口用于“消息本体已经进入 model，但图片文件稍后才准备好”的场景，
+     * 例如：
+     * 1. HTTP 拉回来的历史图片消息；
+     * 2. `ws.new + route=message.created` 推送进来的正式图片消息。
+     *
+     * 它不会覆盖作者、正文、时间和传输状态等其它字段，只刷新图片展示真正需要的
+     * `localPath / width / height`，避免为了回填缩略图又整条消息重新 upsert 一遍。
+     *
+     * @param identity 用于定位目标消息的身份键；通常带 `messageId / clientMessageId / seq` 之一即可。
+     * @param localPath 已下载到本地的图片缓存路径；为空时不更新路径。
+     * @param width 已知图片宽度；小于等于 0 时表示不更新。
+     * @param height 已知图片高度；小于等于 0 时表示不更新。
+     * @return true 表示命中并更新了某条图片消息；false 表示未命中或没有实际变化。
+     */
+    bool updateImagePayload(const MessageItem &identity,
+                            const QString &localPath,
+                            int width = -1,
+                            int height = -1);
 
 private:
     // 按“服务端 message_id -> 本地 client_message_id -> seq”的优先级查找同一条消息，

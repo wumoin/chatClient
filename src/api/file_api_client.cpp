@@ -26,6 +26,11 @@
 namespace chatclient::api {
 namespace {
 
+// 客户端上传前的本地前置校验也要和服务端保持同一条 1 GB 口径。
+// 这样用户在点“发送图片”后，可以立刻得到明确反馈，而不是等网络传输一段时间后
+// 才从服务端收到“文件过大”的失败响应。
+constexpr qint64 kAttachmentMaxBytes = 1024LL * 1024LL * 1024LL;
+
 QString fileNameFromContentDisposition(const QByteArray &headerValue)
 {
     // 下载成功时服务端可能带 Content-Disposition。
@@ -97,6 +102,30 @@ QString FileApiClient::uploadAttachment(
             << requestId
             << " local_file="
             << localFilePath;
+        if (onFailure)
+        {
+            onFailure(error);
+        }
+        file->deleteLater();
+        return requestId;
+    }
+
+    const qint64 fileSizeBytes = file->size();
+    if (fileSizeBytes > kAttachmentMaxBytes)
+    {
+        chatclient::dto::file::ApiErrorDto error;
+        error.httpStatus = 400;
+        error.errorCode = 40001;
+        error.requestId = requestId;
+        error.message = QStringLiteral("附件大小不能超过 1 GB");
+
+        CHATCLIENT_LOG_WARN("file.api")
+            << "本地附件超过上传上限，request_id="
+            << requestId
+            << " local_file="
+            << localFilePath
+            << " size_bytes="
+            << fileSizeBytes;
         if (onFailure)
         {
             onFailure(error);
