@@ -1,5 +1,8 @@
 #include "messagemodel.h"
 
+// MessageModel 是右侧单个会话消息列表的直接数据源。
+// 这里不处理网络、缓存或 WS，只维护当前这份消息列表如何以
+// QAbstractListModel 角色暴露给 delegate / view。
 namespace {
 int messageTypeToInt(MessageType type)
 {

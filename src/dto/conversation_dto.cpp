@@ -3,6 +3,9 @@
 #include <QJsonArray>
 #include <QJsonValue>
 
+// 这份文件负责会话域 DTO 的 JSON 解析与序列化辅助。
+// 设计目标是让上层拿到的都是“结构化 DTO”，而不是到处直接读 QJsonObject。
+// 这样无论数据来自 HTTP 还是 WS，都能共用同一套解析逻辑。
 namespace chatclient::dto::conversation {
 namespace {
 

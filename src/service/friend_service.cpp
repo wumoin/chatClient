@@ -4,6 +4,9 @@
 #include "service/auth_service.h"
 #include "service/friend_error_localizer.h"
 
+// FriendService 是好友域的客户端业务编排层。
+// 它把 AuthService 提供的登录态、FriendApiClient 的网络能力以及
+// 界面需要的中文错误提示收拢到一起，供 AddFriendDialog / ChatWindow 使用。
 namespace chatclient::service {
 namespace {
 

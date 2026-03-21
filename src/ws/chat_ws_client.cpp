@@ -163,6 +163,8 @@ void ChatWsClient::setSession(const QString &accessToken,
 
 void ChatWsClient::connectToServer()
 {
+    // ChatWsClient 只负责“连通和协议收发”，不负责更新会话列表或消息 model。
+    // 业务状态该怎么变化，由上层 ConversationManager 决定。
     m_reconnectTimer->stop();
 
     if (!hasSessionContext())
@@ -197,6 +199,7 @@ void ChatWsClient::connectToServer()
 
 void ChatWsClient::disconnectFromServer()
 {
+    // 主动断开时必须关闭自动重连，否则用户登出或切账号时会马上又被拉起一条旧连接。
     m_reconnectEnabled = false;
     m_authenticated = false;
     m_reconnectTimer->stop();
@@ -230,6 +233,7 @@ QString ChatWsClient::sendBusinessEvent(const QString &route,
         return QString();
     }
 
+    // 所有业务事件统一包成 ws.send，真正的业务语义放到 payload.route 里。
     QJsonObject payload;
     payload.insert(QStringLiteral("route"), trimmedRoute);
     payload.insert(QStringLiteral("data"), data);
@@ -255,6 +259,10 @@ void ChatWsClient::handleConnected()
 
 void ChatWsClient::handleTextMessageReceived(const QString &message)
 {
+    // 这里是实时协议层的统一入口：
+    // 1. 文本帧 -> JSON
+    // 2. JSON -> WsEnvelope
+    // 3. Envelope -> 对应 Qt 信号
     QJsonParseError parseError;
     const QJsonDocument document =
         QJsonDocument::fromJson(message.toUtf8(), &parseError);
@@ -293,6 +301,7 @@ void ChatWsClient::handleTextMessageReceived(const QString &message)
             return;
         }
 
+        // 只有收到 ws.auth.ok 后，这条长连接才算真正可用，后续业务消息才允许发送。
         m_authenticated = true;
         updateStatus(QStringLiteral("实时通道已连接"));
 
@@ -316,6 +325,7 @@ void ChatWsClient::handleTextMessageReceived(const QString &message)
             return;
         }
 
+        // ws.error 是统一错误出口。对于鉴权阶段的错误，这里还会决定要不要停止自动重连。
         const QString localizedMessage = localizeWsError(payload);
         CHATCLIENT_LOG_WARN(kWsLogTag)
             << "实时通道返回错误，code=" << payload.code
@@ -346,6 +356,8 @@ void ChatWsClient::handleTextMessageReceived(const QString &message)
             return;
         }
 
+        // ChatWsClient 只负责把 ws.new 解析出来并抛给上层，
+        // 不在这里直接更新会话摘要或消息列表。
         CHATCLIENT_LOG_INFO(kWsLogTag)
             << "收到实时推送事件，route=" << payload.route;
         emit newEventReceived(payload.route, payload.data);
@@ -365,6 +377,7 @@ void ChatWsClient::handleTextMessageReceived(const QString &message)
             return;
         }
 
+        // ws.ack 表示“之前某个 ws.send 的处理结果”，上层再按 route 继续分发。
         CHATCLIENT_LOG_INFO(kWsLogTag)
             << "收到实时确认事件，route=" << payload.route
             << " ok=" << payload.ok
@@ -384,6 +397,8 @@ void ChatWsClient::handleTextMessageReceived(const QString &message)
 
 void ChatWsClient::handleDisconnected()
 {
+    // 被动断线后，如果仍然持有登录态，就按固定间隔继续尝试重连；
+    // 否则只更新状态，不做额外动作。
     const bool shouldReconnect = m_reconnectEnabled && hasSessionContext();
     m_authenticated = false;
 
@@ -438,6 +453,7 @@ void ChatWsClient::handleSocketError(QAbstractSocket::SocketError error)
 
 void ChatWsClient::sendAuth()
 {
+    // ws.auth 是建连后的第一条业务消息，用来把这条连接绑定到具体 user/device_session。
     chatclient::dto::ws::WsAuthRequestDto authRequest;
     authRequest.accessToken = m_accessToken;
     authRequest.deviceId = m_deviceId;
@@ -453,6 +469,7 @@ void ChatWsClient::sendEnvelope(const QString &type,
                                 const QString &requestId,
                                 const QJsonObject &payload)
 {
+    // 所有发往服务端的实时事件最终都统一从这里出站，便于保持信封格式一致。
     if (m_socket->state() != QAbstractSocket::ConnectedState)
     {
         return;

@@ -1,5 +1,8 @@
 #include "service/friend_error_localizer.h"
 
+// localizer 负责把服务端稳定错误码和少量兼容 message 映射成
+// 面向用户的中文提示。日志是否中文化与这里无关：日志是给开发排障，
+// localizer 是给 UI 直接展示。
 namespace chatclient::service {
 
 QString localizeFriendError(

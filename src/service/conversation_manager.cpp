@@ -18,6 +18,7 @@ namespace {
 
 QString messageTimeText(qint64 createdAtMs)
 {
+    // 当前聊天气泡先统一展示“时:分”，让时间信息稳定且简洁。
     if (createdAtMs <= 0) {
         return QString();
     }
@@ -30,6 +31,7 @@ QString messageTimeText(qint64 createdAtMs)
 QString messagePreview(const chatclient::dto::conversation::ConversationMessageDto
                            &message)
 {
+    // 会话列表只需要一条很轻量的预览文案，不在这里做完整富文本或资源解析。
     if (message.messageType == QStringLiteral("text")) {
         return message.content.value(QStringLiteral("text")).toString();
     }
@@ -66,6 +68,8 @@ QVector<MessageItem> toMessageItems(
     const std::function<QString(const chatclient::dto::conversation::
                                     ConversationMessageDto &)> &authorResolver)
 {
+    // 这一层把服务端 DTO 转成消息视图真正消费的 MessageItem，
+    // 这样 HTTP 历史消息和 WS 实时消息最终都能落到同一套模型结构里。
     QVector<MessageItem> items;
     items.reserve(messages.size());
 
@@ -223,6 +227,11 @@ void ConversationManager::disconnectRealtimeChannel()
 
 void ConversationManager::initializeConversationDataIfNeeded()
 {
+    // 聊天窗口的冷启动策略：
+    // 1. 同一登录会话只做一次 HTTP 快照初始化
+    // 2. 先拉会话列表
+    // 3. 再为每个会话拉一页历史消息
+    // 4. 后续切换会话不再走 HTTP，主要依赖本地 model + WS 增量更新
     if (!m_authService || !m_authService->hasActiveSession()) {
         return;
     }
@@ -260,6 +269,7 @@ void ConversationManager::initializeConversationDataIfNeeded()
             emit conversationListUpdated();
 
             if (response.conversations.isEmpty()) {
+                // 没有会话时直接完成启动，不需要继续为会话逐个拉历史消息。
                 m_loadedSessionKey = sessionKey;
                 m_bootstrapInProgress = false;
                 emit conversationBootstrapFinished();
@@ -269,6 +279,7 @@ void ConversationManager::initializeConversationDataIfNeeded()
             auto pending =
                 std::make_shared<int>(response.conversations.size());
             for (const auto &conversation : response.conversations) {
+                // 冷启动时为每个会话预拉一页历史消息，后续切换会话就能直接绑定本地 model。
                 ConversationRuntimeState &state =
                     ensureState(conversation.conversationId);
                 state.loading = true;
@@ -387,6 +398,7 @@ void ConversationManager::createPrivateConversation(
         [this, onSuccess = std::move(onSuccess)](
             const chatclient::dto::conversation::
                 CreatePrivateConversationResponseDto &response) mutable {
+            // 私聊创建成功后，先立刻把摘要写进会话列表，这样 UI 不需要等下一次全量刷新。
             m_conversationListModel->upsertConversation(response.conversation);
             ensureState(response.conversation.conversationId);
             if (onSuccess) {
@@ -399,6 +411,8 @@ void ConversationManager::createPrivateConversation(
 void ConversationManager::applyConversationListSnapshot(
     const chatclient::dto::conversation::ConversationListResponseDto &response)
 {
+    // 当前客户端策略是：第一次进入聊天页时，把已有会话统一视为“本地已读”，
+    // 避免冷启动后所有历史会话都带着旧未读数压到界面上。
     QVector<chatclient::dto::conversation::ConversationSummaryDto> conversations =
         response.conversations;
     for (auto &conversation : conversations)
@@ -419,6 +433,7 @@ void ConversationManager::applyConversationMessagesSnapshot(
     const chatclient::dto::conversation::ConversationMessageListResponseDto
         &response)
 {
+    // 历史消息快照会整体替换该会话当前的消息基线，并同步刷新本地已加载到的最大 seq。
     const QString currentUserId =
         m_authService ? m_authService->currentSession().user.userId : QString();
     QString peerDisplay;
@@ -477,6 +492,8 @@ void ConversationManager::appendLocalTextMessage(const QString &conversationId,
 bool ConversationManager::appendLocalImageMessage(const QString &conversationId,
                                                   const QString &localPath)
 {
+    // 这条路径只做“本地图片预览”：
+    // 图片先直接插入当前会话的 MessageModel，等后面接入正式上传协议再升级为服务端消息。
     const QString trimmedConversationId = conversationId.trimmed();
     const QString trimmedLocalPath = localPath.trimmed();
     if (trimmedConversationId.isEmpty() || trimmedLocalPath.isEmpty()) {
@@ -553,6 +570,8 @@ bool ConversationManager::appendLocalImageMessage(const QString &conversationId,
 bool ConversationManager::sendTextMessage(const QString &conversationId,
                                           const QString &text)
 {
+    // 当前文本发送策略是：先发 ws.send，不在发送瞬间直接插入一条伪正式消息；
+    // 等收到 ws.ack / ws.new 后，再把正式消息写回本地 model。
     if (!m_chatWsClient || !m_chatWsClient->isAuthenticated()) {
         CHATCLIENT_LOG_WARN("conversation.manager")
             << "拒绝发送文本消息，实时通道当前不可用，conversation_id="
@@ -591,6 +610,8 @@ bool ConversationManager::sendTextMessage(const QString &conversationId,
 bool ConversationManager::markConversationReadLocally(
     const QString &conversationId)
 {
+    // 目前已读处理还是本地策略：进入会话后立即清零未读并推进 lastReadSeq，
+    // 后续如果补服务端已读同步，再把这一步扩成真实回执。
     const QString trimmedConversationId = conversationId.trimmed();
     if (trimmedConversationId.isEmpty()) {
         return false;
@@ -637,6 +658,7 @@ void ConversationManager::handleRealtimeAckEvent(const QString &route,
                                                  const QJsonObject &data,
                                                  const QString &requestId)
 {
+    // ack 入口只做 route 分发，真正的业务处理放到各自单独函数里。
     if (route == QStringLiteral("message.send_text"))
     {
         handleMessageSendTextAck(ok, code, message, data, requestId);
@@ -654,6 +676,8 @@ void ConversationManager::handleMessageSendTextAck(
     const QJsonObject &data,
     const QString &requestId)
 {
+    // ws.ack 是“请求级确认”：表示刚才那次 ws.send 已被服务端处理完，
+    // 但它和后续会话里的正式 message.created 仍然是两件事。
     const PendingTextMessage pending =
         m_pendingTextMessagesByRequestId.take(requestId);
     if (!ok)
@@ -730,6 +754,7 @@ void ConversationManager::handleMessageSendTextAck(
 void ConversationManager::handleRealtimeNewEvent(const QString &route,
                                                  const QJsonObject &data)
 {
+    // new 入口同样只做路由分发；同时先把事件向上抛，让好友页等其它界面也能复用同一条事件流。
     emit realtimeNewEventReceived(route, data);
 
     if (route == QStringLiteral("message.created"))
@@ -758,6 +783,8 @@ void ConversationManager::handleRealtimeNewEvent(const QString &route,
 
 void ConversationManager::handleMessageCreatedEvent(const QJsonObject &data)
 {
+    // 这里是正式消息进入本地状态的统一入口。
+    // 无论是别人发来的消息，还是自己发送后广播回来的正式消息，都会走这里。
     chatclient::dto::conversation::ConversationMessageDto message;
     QString errorMessage;
     if (!chatclient::dto::conversation::parseConversationMessageObject(
@@ -804,6 +831,8 @@ void ConversationManager::handleMessageCreatedEvent(const QJsonObject &data)
     state.lastLoadedMaxSeq = qMax(state.lastLoadedMaxSeq, message.seq);
     updateConversationSummaryFromMessage(message, messagePreview(message));
 
+    // 如果这条正式消息带回了 client_message_id，就把对应的待确认发送记录清掉，
+    // 避免同一条消息在 pending 表里长期残留。
     for (auto it = m_pendingTextMessagesByRequestId.begin();
          it != m_pendingTextMessagesByRequestId.end();)
     {
@@ -828,6 +857,8 @@ void ConversationManager::handleMessageCreatedEvent(const QJsonObject &data)
 void ConversationManager::handleConversationCreatedEvent(
     const QJsonObject &data)
 {
+    // 新建会话事件只需要把会话摘要注入列表即可；
+    // 消息内容仍然由后续历史同步或实时 message.created 来补齐。
     const QJsonValue conversationValue =
         data.value(QStringLiteral("conversation"));
     if (!conversationValue.isObject())
@@ -861,12 +892,15 @@ void ConversationManager::handleConversationCreatedEvent(
 
 void ConversationManager::handleFriendRealtimeEvent(const QString &route)
 {
+    // 当前 manager 只负责记录和向上分发好友实时事件，具体刷新哪个好友界面由外层窗口决定。
     CHATCLIENT_LOG_INFO("conversation.manager")
         << "已接入实时好友事件，route=" << route;
 }
 
 void ConversationManager::resetConversationData()
 {
+    // 登录态切换或登出后，要把会话列表、消息模型、运行时状态和 pending 发送全部清空，
+    // 避免上一位用户的数据残留在当前窗口里。
     m_conversationListModel->clear();
     m_messageModelRegistry->clearAll();
     m_runtimeStates.clear();
@@ -905,6 +939,8 @@ void ConversationManager::updateConversationSummaryFromMessage(
     const chatclient::dto::conversation::ConversationMessageDto &message,
     const QString &previewText)
 {
+    // 所有“最后一条消息摘要 + 未读数”的本地更新统一收口到这里，
+    // 避免 HTTP、ack、new 各自维护一套摘要逻辑。
     chatclient::dto::conversation::ConversationSummaryDto conversation;
     if (!m_conversationListModel->conversationById(message.conversationId,
                                                    &conversation))
@@ -925,6 +961,8 @@ void ConversationManager::updateConversationSummaryFromMessage(
     }
     else
     {
+        // 当前最小未读规则：只要是别人发来的正式消息，就把未读数 +1。
+        // 进入会话时再通过 markConversationReadLocally 归零。
         conversation.unreadCount = qMax<qint64>(0, conversation.unreadCount) + 1;
     }
 

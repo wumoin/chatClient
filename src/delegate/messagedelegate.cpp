@@ -82,6 +82,7 @@ QString fallbackText(const QModelIndex &index)
 
 MessageType messageTypeFromIndex(const QModelIndex &index)
 {
+    // model 里用 int role 暴露消息类型，这里统一转回枚举，后续布局和绘制都复用这个入口。
     return static_cast<MessageType>(
         index.data(MessageModel::MessageTypeRole).toInt());
 }
@@ -100,6 +101,10 @@ QString messageBodyText(const QModelIndex &index)
 
 QSize resolveImageSourceSize(const QModelIndex &index)
 {
+    // 图片尺寸优先级：
+    // 1. 直接使用 model 已知宽高
+    // 2. 退回到本地文件探测
+    // 3. 仍然拿不到时使用占位尺寸
     const int width = index.data(MessageModel::ImageWidthRole).toInt();
     const int height = index.data(MessageModel::ImageHeightRole).toInt();
     if (width > 0 && height > 0) {
@@ -147,6 +152,7 @@ QString imageCacheKey(const QString &localPath, const QSize &targetSize)
 
 QPixmap loadImagePixmap(const QString &localPath, const QSize &targetSize)
 {
+    // 缩略图按“本地路径 + 目标尺寸”做缓存，避免列表滚动时反复解码同一张图片。
     if (localPath.trimmed().isEmpty() || !targetSize.isValid() ||
         !QFileInfo::exists(localPath))
     {
@@ -235,6 +241,8 @@ BubbleLayout buildBubbleLayout(const QStyleOptionViewItem &option,
                                const QString &timeText,
                                bool fromSelf)
 {
+    // 统一先做一次布局计算，再让 sizeHint() 和 paint() 共同复用。
+    // 这样消息气泡的测量和实际绘制才能保持一致，不容易出现裁剪或跳动。
     const QFont aFont = authorFont(option.font);
     const QFont mFont = messageFont(option.font);
     const QFont tFont = timeFont(option.font);
@@ -512,6 +520,7 @@ int MessageDelegate::textPositionAt(const QStyleOptionViewItem &option,
     const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
     const BubbleLayout layout =
         buildBubbleLayout(option, index, author, text, timeText, fromSelf);
+    // 图片消息如果没有 caption，就不存在可选中的正文区域。
     if (layout.messageRect.height() <= 0 || text.isEmpty()) {
         return -1;
     }
@@ -604,6 +613,7 @@ QSize MessageDelegate::sizeHint(const QStyleOptionViewItem &option, const QModel
     const bool fromSelf = index.data(MessageModel::FromSelfRole).toBool();
     QStyleOptionViewItem optionForLayout(option);
     optionForLayout.rect.setWidth(viewportWidth);
+    // 高度计算必须和 paint 使用同一套布局规则，否则图片和多行文本很容易被裁掉。
     const BubbleLayout layout = buildBubbleLayout(optionForLayout,
                                                   index,
                                                   author,
@@ -615,6 +625,8 @@ QSize MessageDelegate::sizeHint(const QStyleOptionViewItem &option, const QModel
 
 void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
+    // delegate 只负责“如何画”，不在这里改变消息业务状态。
+    // 消息是否已确认、是否有未读都应该在 model/manager 层先算好。
     // 1) 拉取渲染所需数据。
     const QString author = index.data(MessageModel::AuthorRole).toString();
     const QString text = messageBodyText(index);
@@ -659,6 +671,7 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         }
         else
         {
+            // 图片还没准备好时先画占位块，避免消息气泡完全空白。
             painter->fillRect(layout.imageRect,
                               QColor(QStringLiteral("#edf3fb")));
             painter->setPen(QColor(QStringLiteral("#8ea0bb")));

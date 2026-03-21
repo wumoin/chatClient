@@ -11,9 +11,14 @@
 #include <QUuid>
 #include <QUrlQuery>
 
+// ConversationApiClient 是会话域的纯 HTTP 客户端。
+// 这里保持一个很重要的边界：它只负责把 Qt 网络请求和 JSON 响应
+// 转换成 DTO，不负责缓存、模型更新或 WS 实时同步。
 namespace chatclient::api {
 namespace {
 
+// 会话域接口的错误结构和成功结构比较统一，这个 helper 用来把
+// “解析 + 日志 + 成功失败分发” 这套样板逻辑集中起来，避免每个接口重复实现。
 template <typename ResponseDto, typename ParseSuccessFn, typename SuccessHandler,
           typename FailureHandler>
 void handleConversationReply(QNetworkReply *reply,

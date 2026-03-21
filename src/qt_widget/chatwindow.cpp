@@ -19,10 +19,8 @@
 #include <QFileDialog>
 #include <QFrame>
 #include <QHBoxLayout>
-#include <QIcon>
 #include <QImage>
 #include <QKeyEvent>
-#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -33,7 +31,6 @@
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QTextEdit>
-#include <QTime>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -112,6 +109,8 @@ QListWidgetItem *createConversationListItem(const QString &title,
                                             const qint64 unreadCount,
                                             QListWidget *parent)
 {
+    // 当前中间栏还在使用 QListWidget，因此每条会话摘要会在这里投影成一个独立的 item widget：
+    // 左侧头像，中间标题+最后一条消息预览，右侧未读数角标。
     auto *item = new QListWidgetItem(parent);
     item->setSizeHint(QSize(0, 72));
 
@@ -742,6 +741,11 @@ QWidget *ChatWindow::createMessageContentPage()
 {
     const auto &config = chatclient::config::AppConfig::instance();
 
+    // 右侧消息页由三部分组成：
+    // 1. 顶部会话头部
+    // 2. 中间消息列表
+    // 3. 底部输入区
+    // 这些控件后续会被切换会话、WS 事件和发送状态反复修改，因此统一存成 ChatWindow 成员。
     auto *panel = new QFrame(this);
     panel->setObjectName(QStringLiteral("contentPanel"));
 
@@ -836,9 +840,6 @@ QWidget *ChatWindow::createMessageContentPage()
                               QStringLiteral("3 人在线 · 需求评审中"));
     setConversationComposerHintText(
         QStringLiteral("当前服务地址：%1").arg(config.httpBaseUrlText()));
-    setConversationHeaderActionsEnabled(true);
-    setMessageComposerActionsEnabled(true);
-    setMessageSendButtonText(QStringLiteral("发送"));
 
     panelLayout->addWidget(header);
     panelLayout->addWidget(m_messageListView, 1);
@@ -858,6 +859,8 @@ bool ChatWindow::eventFilter(QObject *watched, QEvent *event)
     if (watched == m_messageEditor && event &&
         event->type() == QEvent::KeyPress)
     {
+        // 输入框里采用聊天类应用常见约定：
+        // Enter 发送；Shift+Enter 保留为换行。
         auto *keyEvent = static_cast<QKeyEvent *>(event);
         const int key = keyEvent->key();
         const Qt::KeyboardModifiers modifiers = keyEvent->modifiers();
@@ -939,26 +942,8 @@ QWidget *ChatWindow::createFriendContentPage()
             this,
             &ChatWindow::handleStartPrivateConversation);
 
-    // auto *placeholderCard = new QFrame(panel);
-    // placeholderCard->setObjectName(QStringLiteral("friendPlaceholderCard"));
-    // auto *placeholderLayout = new QVBoxLayout(placeholderCard);
-    // placeholderLayout->setContentsMargins(18, 18, 18, 18);
-    // placeholderLayout->setSpacing(6);
-
-    // auto *placeholderTitle = new QLabel(QStringLiteral("好友模式"), placeholderCard);
-    // placeholderTitle->setObjectName(QStringLiteral("friendPlaceholderTitle"));
-    // auto *placeholderBody = new QLabel(
-    //     QStringLiteral("当前已经完成左侧导航切换、中间栏切换和“添加好友”独立弹窗骨架。后续这里会继续接好友资料、申请列表和发消息入口。"),
-    //     placeholderCard);
-    // placeholderBody->setObjectName(QStringLiteral("friendPlaceholderBody"));
-    // placeholderBody->setWordWrap(true);
-
-    //placeholderLayout->addWidget(placeholderTitle);
-    //placeholderLayout->addWidget(placeholderBody);
-
     layout->addWidget(heroCard);
     layout->addLayout(actionRow);
-    //layout->addWidget(placeholderCard);
     layout->addStretch(1);
 
     return panel;
@@ -1145,6 +1130,8 @@ void ChatWindow::updateSessionListFromManager(bool keepSelection)
         return;
     }
 
+    // 目前中间栏仍然使用 QListWidget，因此这里会把 ConversationListModel
+    // 的会话摘要快照重新投影成列表项 widget。
     m_sessionList->clear();
 
     const auto applyConversationAvatar = [](QWidget *itemWidget,
@@ -1165,6 +1152,8 @@ void ChatWindow::updateSessionListFromManager(bool keepSelection)
     int targetRow = -1;
     for (int row = 0; row < conversationModel->rowCount(); ++row)
     {
+        // 先从 ConversationListModel 读取标准摘要字段，再把 UI 当前直接会用到的关键字段
+        // 缓存在 QListWidgetItem 的 role 上，后续切换会话时就不需要反查 model。
         const QModelIndex index = conversationModel->index(row, 0);
         const QString conversationId =
             index.data(
@@ -1216,6 +1205,8 @@ void ChatWindow::updateSessionListFromManager(bool keepSelection)
             !avatarStorageKey.trimmed().isEmpty() &&
             !m_conversationAvatarCache.contains(peerUserId))
         {
+            // 会话列表头像采用简单的内存缓存，以 peer_user_id 为 key，
+            // 避免每次列表重绘都重复发起头像下载。
             m_userApiClient->downloadUserAvatar(
                 peerUserId,
                 [this, peerUserId, applyConversationAvatar](const QByteArray &data) {
@@ -1309,6 +1300,10 @@ void ChatWindow::handleSessionSelectionChanged()
         return;
     }
 
+    // 切换会话时当前不再重新发 HTTP：
+    // 1. 记录当前 conversation_id
+    // 2. 本地清掉该会话未读
+    // 3. 切换右侧绑定的 MessageModel
     m_currentConversationId = item->data(kConversationIdRole).toString();
     if (m_currentConversationId.isEmpty()) {
         return;
@@ -1547,39 +1542,6 @@ void ChatWindow::setConversationComposerHintText(const QString &text)
 {
     if (m_messageComposerHintLabel) {
         m_messageComposerHintLabel->setText(text);
-    }
-}
-
-void ChatWindow::setConversationHeaderActionsEnabled(const bool enabled)
-{
-    if (m_conversationVoiceButton) {
-        m_conversationVoiceButton->setEnabled(enabled);
-    }
-    if (m_conversationVideoButton) {
-        m_conversationVideoButton->setEnabled(enabled);
-    }
-}
-
-void ChatWindow::setMessageComposerActionsEnabled(const bool enabled)
-{
-    if (m_messageEditor) {
-        m_messageEditor->setEnabled(enabled);
-    }
-    if (m_messageEmojiButton) {
-        m_messageEmojiButton->setEnabled(enabled);
-    }
-    if (m_messageFileButton) {
-        m_messageFileButton->setEnabled(enabled);
-    }
-    if (m_messageSendButton) {
-        m_messageSendButton->setEnabled(enabled);
-    }
-}
-
-void ChatWindow::setMessageSendButtonText(const QString &text)
-{
-    if (m_messageSendButton && !text.trimmed().isEmpty()) {
-        m_messageSendButton->setText(text);
     }
 }
 

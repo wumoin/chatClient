@@ -16,6 +16,13 @@
 #include <QNetworkRequest>
 #include <QUuid>
 
+// UserApiClient 负责用户资料和头像相关的 HTTP 交互。
+// 这里同时覆盖了两类请求：
+// - JSON 请求：例如资料更新
+// - multipart / 二进制流请求：例如头像上传、头像下载
+//
+// 复杂度主要来自文件读写和 multipart 组装，所以把这些细节收口在这一层，
+// 避免窗口或 service 直接操作 QNetworkRequest / QHttpMultiPart。
 namespace chatclient::api {
 
 UserApiClient::UserApiClient(QObject *parent)

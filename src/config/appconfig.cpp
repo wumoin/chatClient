@@ -7,6 +7,13 @@
 #include <QJsonObject>
 #include <QUrlQuery>
 
+// AppConfig 是客户端配置的只读快照。程序启动时加载一次 app.json，
+// 之后其他模块只通过 AppConfig::instance() 取配置，不再自己读文件。
+//
+// 这种做法能保证：
+// - URL 拼接规则统一
+// - 配置错误集中在启动阶段暴露
+// - 上层模块不需要重复处理 JSON 解析和路径定位
 namespace chatclient::config {
 namespace {
 

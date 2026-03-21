@@ -227,24 +227,6 @@ class ChatWindow : public QWidget
     void setConversationComposerHintText(const QString &text);
 
     /**
-     * @brief 统一更新消息页顶部操作按钮的可用状态。
-     * @param enabled true 表示可点击；false 表示禁用。
-     */
-    void setConversationHeaderActionsEnabled(bool enabled);
-
-    /**
-     * @brief 统一更新消息输入区相关控件的可用状态。
-     * @param enabled true 表示可编辑 / 可点击；false 表示禁用。
-     */
-    void setMessageComposerActionsEnabled(bool enabled);
-
-    /**
-     * @brief 更新发送按钮文案。
-     * @param text 需要展示的新文案。
-     */
-    void setMessageSendButtonText(const QString &text);
-
-    /**
      * @brief 处理发送动作并将输入框内容写入当前会话。
      */
     void handleSendMessage();

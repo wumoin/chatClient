@@ -3,6 +3,11 @@
 #include <QJsonArray>
 #include <QJsonValue>
 
+// 好友域 DTO 解析。这里的 helper 主要解决两类问题：
+// - 统一校验服务端字段是否存在、类型是否正确
+// - 把好友申请 / 好友列表 / 搜索结果都转成稳定 DTO
+//
+// 上层 service 和 dialog 只依赖这些 DTO，不需要理解原始 JSON 细节。
 namespace chatclient::dto::friendship {
 namespace {
 

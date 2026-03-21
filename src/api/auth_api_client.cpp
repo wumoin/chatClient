@@ -13,6 +13,13 @@
 #include <QTimer>
 #include <QUuid>
 
+// AuthApiClient 只负责认证域 HTTP 交互本身：
+// - 从 AppConfig 读取接口地址
+// - 发送请求
+// - 解析统一响应
+// - 将成功/失败结果通过回调抛回上层
+//
+// 它不负责窗口切换、登录态落盘或错误中文化，这些属于 service / widget 层。
 namespace chatclient::api {
 
 AuthApiClient::AuthApiClient(QObject *parent)

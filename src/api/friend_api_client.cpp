@@ -10,6 +10,9 @@
 #include <QNetworkRequest>
 #include <QUuid>
 
+// FriendApiClient 处理好友域 HTTP 请求，例如搜索用户、发送申请、
+// 查询申请列表和好友列表。上层 service 会在这里的 DTO 结果基础上
+// 再做业务编排和界面更新。
 namespace chatclient::api {
 
 FriendApiClient::FriendApiClient(QObject *parent)

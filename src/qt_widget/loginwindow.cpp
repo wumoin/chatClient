@@ -33,6 +33,9 @@
 #include <sys/socket.h>
 #endif
 
+// LoginWindow 承担客户端的登录 / 注册入口界面，并负责在成功认证后
+// 打开 ChatWindow。这里还额外接入了注册头像上传，因此它既要处理
+// 常规表单验证，也要处理少量图片预览和上传状态反馈。
 
 static QString loadGlobalStyle()
 {
@@ -491,6 +494,8 @@ void LoginWindow::handleLoginSubmit()
         return;
     }
 
+    // 窗口层的职责很薄：收集表单 -> 调 AuthService -> 只在同步校验失败时就地提示。
+    // 真正的网络请求和登录态持久化都已经在 AuthService 里收口。
     CHATCLIENT_LOG_INFO("login.window")
         << "点击登录，account="
         << (m_accountEdit ? m_accountEdit->text() : QString());
@@ -537,6 +542,8 @@ void LoginWindow::handleSwitchAccountRequested()
         return;
     }
 
+    // “切换账号”不是简单关窗口，而是一次完整登出：
+    // 先向用户确认，再调用 AuthService 让服务端会话失效，最后回到登录页。
     const auto answer = QMessageBox::question(
         m_chatWindow != nullptr ? static_cast<QWidget *>(m_chatWindow)
                                 : static_cast<QWidget *>(this),
@@ -632,6 +639,12 @@ void LoginWindow::handleRegisterAvatarSelect()
         return;
     }
 
+    // 注册头像的体验是“选中即上传”：
+    // - 先本地预览
+    // - 再调用临时头像上传接口
+    // - 注册提交时只带 avatar_upload_key
+    //
+    // 这样注册接口仍然是轻量表单，不需要在注册时再次上传二进制文件。
     const QString filePath = QFileDialog::getOpenFileName(
         this,
         QStringLiteral("选择头像"),
@@ -673,6 +686,7 @@ void LoginWindow::handleRegisterAvatarSelect()
                 << response.requestId
                 << " avatar_upload_key="
                 << response.avatarUploadKey;
+            // 上传成功后不额外弹成功框，避免打断注册流程；提示留在状态区和头像 hint 里即可。
             setRegisterStatusMessage(QString(), StatusTone::kInfo);
         },
         [this](const chatclient::dto::user::ApiErrorDto &error) {
@@ -722,6 +736,7 @@ void LoginWindow::handleRegisterSubmit()
 
     if (m_registerAvatarUploading)
     {
+        // 注册请求必须等头像上传先稳定下来，否则服务端拿不到可引用的 avatar_upload_key。
         setRegisterStatusMessage(QStringLiteral("头像仍在上传，请稍候"),
                                  StatusTone::kInfo);
         return;
@@ -754,6 +769,7 @@ void LoginWindow::handleRegisterSucceeded(
     setRegisterStatusMessage(QStringLiteral("注册成功，请返回登录页继续。"),
                              StatusTone::kSuccess);
 
+    // 注册成功后做一次表单和头像状态重置，避免下次打开注册页时还残留上一次输入。
     if (m_accountEdit) {
         m_accountEdit->setText(user.account);
     }
@@ -896,6 +912,11 @@ void LoginWindow::setRegisterAvatarUploading(const bool uploading)
 {
     m_registerAvatarUploading = uploading;
 
+    // 头像上传和注册提交存在强依赖，所以这里要同时联动：
+    // - “设置头像”按钮文本
+    // - 注册按钮可用性
+    // - 返回登录按钮可用性
+    // - hint 文案
     if (m_registerAvatarSelectButton)
     {
         m_registerAvatarSelectButton->setEnabled(!uploading);
@@ -928,6 +949,8 @@ void LoginWindow::setRegisterAvatarUploading(const bool uploading)
 
 void LoginWindow::resetRegisterAvatarState()
 {
+    // 这个 helper 用来把注册头像区域恢复到完全初始态。
+    // 注册成功、切回登录页或上传失败重试等场景都会复用它。
     m_registerAvatarUploading = false;
     m_registerAvatarUploadKey.clear();
 
@@ -987,6 +1010,8 @@ void LoginWindow::openChatWindow(
     const chatclient::dto::auth::LoginSessionDto &session)
 {
     if (!m_chatWindow) {
+        // ChatWindow 采用延迟创建：只有真正登录成功时才实例化，
+        // 这样程序启动阶段不会额外建立聊天页和 WS 相关对象。
         m_chatWindow = new ChatWindow();
         m_chatWindow->setAuthService(m_authService);
         connect(m_chatWindow,
@@ -999,6 +1024,7 @@ void LoginWindow::openChatWindow(
                 &LoginWindow::handleSignOutRequested);
     }
 
+    // 登录成功后，LoginWindow 只做一次“把认证结果同步到聊天页并切过去”。
     const QString displayName = session.user.nickname.isEmpty()
                                     ? session.account
                                     : session.user.nickname;
@@ -1025,6 +1051,7 @@ bool LoginWindow::performApplicationExitLogout(bool showConfirmation,
 
     if (showConfirmation)
     {
+        // 从聊天页主动登出时走确认；应用关闭时可以关闭确认，保持退出流程顺滑。
         const auto answer = QMessageBox::question(
             dialogParent != nullptr ? dialogParent : this,
             QStringLiteral("登出"),
@@ -1037,6 +1064,8 @@ bool LoginWindow::performApplicationExitLogout(bool showConfirmation,
 
     m_applicationShutdownInProgress = true;
 
+    // 应用退出时优先尝试一次阻塞式远端登出，让服务端及时回收 device_session。
+    // 如果失败，也仍然允许本地继续退出，不把用户困在窗口里。
     if (m_chatWindow)
     {
         m_chatWindow->setSessionActionSubmitting(true, true);

@@ -1,5 +1,8 @@
 #include "dto/ws_dto.h"
 
+// WS DTO 只负责“协议层” JSON 与结构体互转。
+// 业务层 route 的真正含义不在这里处理，而是交给 ChatWsClient 和
+// ConversationManager 继续分发。
 namespace chatclient::dto::ws {
 
 QJsonObject toJsonObject(const WsEnvelopeDto &envelope)

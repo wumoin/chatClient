@@ -25,6 +25,12 @@
 #include <algorithm>
 #include <functional>
 
+// AddFriendDialog 是“好友申请中心”的实现：
+// - 申请好友页：搜索用户、填写附言、查看已发送申请
+// - 新的朋友页：查看收到的申请并处理
+//
+// 它本身不直接碰底层 HTTP，而是依赖 FriendService / ConversationManager
+// 提供已经整理好的业务能力和实时事件。
 namespace {
 
 constexpr int kSearchResultAreaHeight = 128;
@@ -363,6 +369,9 @@ AddFriendDialog::AddFriendDialog(chatclient::service::AuthService *authService,
     setStatusMessage(QString(), QStringLiteral("info"));
     switchMode(true);
 
+    // 统一在构造阶段把所有 UI 事件与 service 信号接起来。
+    // 这样弹窗一旦创建完成，就进入“自给自足”的状态：按钮点击驱动 service，
+    // service 回调再反过来刷新 UI。
     connect(closeButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_applyModeButton, &QPushButton::clicked, this, [this]() {
         switchMode(true);
@@ -552,6 +561,8 @@ AddFriendDialog::AddFriendDialog(chatclient::service::AuthService *authService,
 
     if (m_conversationManager)
     {
+        // 好友申请弹窗并不自己维护单独 WS 客户端，而是复用 ConversationManager
+        // 已经接入的实时事件流。这样好友页和会话页能共享同一条连接和同一套协议口径。
         connect(m_conversationManager,
                 &chatclient::service::ConversationManager::realtimeNewEventReceived,
                 this,
@@ -594,6 +605,7 @@ AddFriendDialog::AddFriendDialog(chatclient::service::AuthService *authService,
 
 void AddFriendDialog::loadOutgoingRequests()
 {
+    // 统一通过 FriendService 发起列表刷新，窗口层只关心同步触发和错误提示。
     QString errorMessage;
     if (!m_friendService->fetchOutgoingRequests(&errorMessage))
     {
@@ -612,6 +624,7 @@ void AddFriendDialog::loadIncomingRequests()
 
 void AddFriendDialog::switchMode(const bool applyMode)
 {
+    // 模式切换本质上只是切 stacked page，同时同步顶部按钮和底部主按钮可见性。
     if (m_applyModeButton)
     {
         m_applyModeButton->setChecked(applyMode);
@@ -635,6 +648,7 @@ void AddFriendDialog::updateSearchResult(
 {
     m_currentSearchResult = response;
 
+    // 搜不到用户时，直接回到占位态；后面的提交按钮和附言框都会随 updateActionState 一起收起。
     if (!response.exists)
     {
         clearSearchResult(QStringLiteral("未找到该账号，请检查后重新搜索。"));
@@ -663,6 +677,8 @@ void AddFriendDialog::updateSearchResult(
             ? QStringLiteral("你已经向该用户发送过待处理申请。")
             : QStringLiteral("确认无误后可以填写附言并发送好友申请。"));
 
+    // 搜索结果区只负责展示“当前这个账号能不能申请”，真正是否可提交仍由 updateActionState
+    // 统一根据搜索态 / 发送态 / 已有 pending 状态收敛。
     setStatusMessage(alreadyPending
                          ? QStringLiteral("该用户已有待处理好友申请")
                          : QStringLiteral("已找到目标用户，可继续发送好友申请"),
@@ -727,6 +743,8 @@ void AddFriendDialog::updateOutgoingRequests(
         m_outgoingEmptyHintLabel->setVisible(false);
     }
 
+    // 已发送申请列表当前保持成轻量文本项，重点是快速查看状态和附言。
+    // 后续如果要支持撤销申请，再在这里升级成自定义 widget 即可。
     for (const auto &request : requests)
     {
         const QString title = QStringLiteral("%1 (%2)")
@@ -777,6 +795,8 @@ void AddFriendDialog::updateIncomingRequests(
         !(m_friendService && m_friendService->isHandlingRequest()) &&
         !(m_friendService && m_friendService->isLoadingIncomingRequests());
 
+    // 收到的申请是可操作列表，所以这里用自定义卡片 widget，而不是简单文本项。
+    // 每张卡片内部再把 accept/reject 动作绑定回 FriendService。
     for (const auto &request : requests)
     {
         auto *item = new QListWidgetItem(m_incomingList);
@@ -807,6 +827,13 @@ void AddFriendDialog::updateIncomingRequests(
 
 void AddFriendDialog::updateActionState()
 {
+    // 申请好友页的按钮状态受多种异步状态共同影响：
+    // - 正在搜索
+    // - 正在发送申请
+    // - 正在刷新发件箱
+    // - 当前搜索结果是否存在、是否已经 pending
+    //
+    // 这些条件统一收敛在一个函数里，避免不同回调各自改控件导致状态打架。
     const bool searching = m_friendService && m_friendService->isSearching();
     const bool loadingOutgoing =
         m_friendService && m_friendService->isLoadingOutgoingRequests();
@@ -860,6 +887,8 @@ void AddFriendDialog::updateActionState()
 void AddFriendDialog::applyHandledIncomingRequest(
     const chatclient::dto::friendship::FriendRequestItemDto &request)
 {
+    // 成功处理一条好友申请后，优先做本地列表内替换，避免整页重拉带来视觉跳动；
+    // 只有本地找不到对应 request_id 时，才回退到完整刷新。
     for (auto &item : m_incomingRequests)
     {
         if (item.requestId == request.requestId)

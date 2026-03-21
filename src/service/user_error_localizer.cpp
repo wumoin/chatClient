@@ -1,5 +1,7 @@
 #include "service/user_error_localizer.h"
 
+// 用户资料 / 头像相关接口的错误翻译集中放在这里，避免窗口层直接根据
+// 英文 message 写判断逻辑。后面如果服务端错误码继续稳定，这里也最容易统一维护。
 namespace chatclient::service {
 
 QString localizeUserError(const chatclient::dto::user::ApiErrorDto &error)

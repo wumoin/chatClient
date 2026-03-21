@@ -14,6 +14,13 @@
 #include <QShortcut>
 #include <QStyleOptionViewItem>
 
+// MessageListView 是消息区域的交互外壳：
+// - delegate 负责画气泡
+// - model 负责提供数据
+// - view 自己负责选择、拖拽选中、右键复制和快捷键行为
+//
+// 这样 ChatWindow 只需要关心“当前显示哪个 model”，不需要自己处理
+// 文本复制或局部交互细节。
 MessageListView::MessageListView(QWidget *parent)
     : QListView(parent)
 {

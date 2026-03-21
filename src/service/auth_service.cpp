@@ -8,6 +8,13 @@
 #include <QSysInfo>
 #include <QUuid>
 
+// AuthService 是客户端认证域的业务层：
+// - 校验本地输入
+// - 驱动 AuthApiClient 发请求
+// - 管理本地登录态持久化
+// - 对外提供“当前会话是谁”的统一入口
+//
+// 这样窗口层就不需要理解 token、device_session_id 或 QSettings 的细节。
 namespace chatclient::service {
 namespace {
 

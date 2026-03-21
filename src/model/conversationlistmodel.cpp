@@ -3,6 +3,7 @@
 namespace chatclient::model {
 namespace {
 
+// 预先把 conversation_id 映射成行号，后续按会话更新摘要时就不需要每次线性扫描整张列表。
 QHash<QString, int> buildRowIndex(
     const QVector<chatclient::dto::conversation::ConversationSummaryDto>
         &conversations)
@@ -38,6 +39,8 @@ QVariant ConversationListModel::data(const QModelIndex &index, int role) const
     }
 
     const auto &conversation = m_conversations.at(index.row());
+    // 这个 model 只暴露“会话摘要”信息。真正的历史消息内容不放在这里，
+    // 而是由 MessageModelRegistry 按 conversation_id 单独维护。
     switch (role) {
     case Qt::DisplayRole:
     case TitleRole:
@@ -92,6 +95,7 @@ void ConversationListModel::setConversations(
     const QVector<chatclient::dto::conversation::ConversationSummaryDto>
         &conversations)
 {
+    // 启动阶段的 HTTP 快照会整体替换本地会话列表，因此这里直接 reset 更清晰。
     beginResetModel();
     m_conversations = conversations;
     m_rowByConversationId = buildRowIndex(m_conversations);
@@ -101,6 +105,8 @@ void ConversationListModel::setConversations(
 void ConversationListModel::upsertConversation(
     const chatclient::dto::conversation::ConversationSummaryDto &conversation)
 {
+    // 会话摘要的新增和更新统一走 upsert：HTTP 首次同步、WS 新建会话、
+    // 以及收到新消息后最后一条消息预览变化，都会复用这条路径。
     const int existingRow =
         m_rowByConversationId.value(conversation.conversationId, -1);
     if (existingRow >= 0) {
@@ -152,6 +158,7 @@ bool ConversationListModel::conversationById(
 QString ConversationListModel::displayTitle(
     const chatclient::dto::conversation::ConversationSummaryDto &conversation)
 {
+    // 列表标题按“昵称 -> 账号 -> conversation_id”回退，保证任何情况下都有稳定文案。
     if (!conversation.peerUser.nickname.trimmed().isEmpty()) {
         return conversation.peerUser.nickname.trimmed();
     }
