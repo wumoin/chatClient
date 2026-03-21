@@ -127,16 +127,16 @@ bool readOptionalInt64(const QJsonObject &object,
 
 }  // namespace
 
-bool parseAttachmentObject(const QJsonObject &object,
-                           AttachmentDto *out,
-                           QString *errorMessage)
+bool parseTemporaryAttachmentUploadObject(const QJsonObject &object,
+                                          TemporaryAttachmentUploadDto *out,
+                                          QString *errorMessage)
 {
-    // 这里解析的是服务端 attachments 表对应的最小对外视图：
-    // 稳定标识、展示信息、下载地址，以及图片类附件的可选尺寸。
-    AttachmentDto parsed;
+    // 这里解析的是服务端临时上传成功后的最小视图：
+    // upload key、展示信息，以及图片类附件的可选尺寸。
+    TemporaryAttachmentUploadDto parsed;
     if (!readRequiredString(object,
-                            QStringLiteral("attachment_id"),
-                            &parsed.attachmentId,
+                            QStringLiteral("attachment_upload_key"),
+                            &parsed.attachmentUploadKey,
                             errorMessage) ||
         !readRequiredString(object,
                             QStringLiteral("file_name"),
@@ -153,26 +153,17 @@ bool parseAttachmentObject(const QJsonObject &object,
         !readRequiredString(object,
                             QStringLiteral("media_kind"),
                             &parsed.mediaKind,
-                            errorMessage) ||
-        !readRequiredString(object,
-                            QStringLiteral("download_url"),
-                            &parsed.downloadUrl,
                             errorMessage))
     {
         return false;
     }
 
-    parsed.storageKey = readOptionalString(object, QStringLiteral("storage_key"));
-    parsed.hasStorageKey = !parsed.storageKey.isEmpty();
     parsed.hasImageWidth = readOptionalInt(object,
                                            QStringLiteral("image_width"),
                                            &parsed.imageWidth);
     parsed.hasImageHeight = readOptionalInt(object,
                                             QStringLiteral("image_height"),
                                             &parsed.imageHeight);
-    parsed.hasCreatedAtMs = readOptionalInt64(object,
-                                              QStringLiteral("created_at_ms"),
-                                              &parsed.createdAtMs);
 
     if (out)
     {
@@ -205,13 +196,12 @@ bool parseUploadAttachmentSuccessResponse(
         return false;
     }
 
-    const QJsonValue attachmentValue =
-        dataValue.toObject().value(QStringLiteral("attachment"));
-    if (!attachmentValue.isObject())
+    const QJsonValue uploadValue = dataValue.toObject().value(QStringLiteral("upload"));
+    if (!uploadValue.isObject())
     {
         if (errorMessage)
         {
-            *errorMessage = QStringLiteral("响应缺少 attachment 对象");
+            *errorMessage = QStringLiteral("响应缺少 upload 对象");
         }
         return false;
     }
@@ -219,8 +209,8 @@ bool parseUploadAttachmentSuccessResponse(
     UploadAttachmentResponseDto parsed;
     // request_id 仍然取顶层字段，方便把上传日志和后续错误回溯串起来。
     parsed.requestId = readOptionalString(root, QStringLiteral("request_id"));
-    if (!parseAttachmentObject(attachmentValue.toObject(),
-                               &parsed.attachment,
+    if (!parseTemporaryAttachmentUploadObject(uploadValue.toObject(),
+                               &parsed.upload,
                                errorMessage))
     {
         return false;

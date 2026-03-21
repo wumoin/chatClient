@@ -16,11 +16,11 @@ namespace chatclient::api {
  * @brief 聊天附件 HTTP API 客户端。
  *
  * 当前承接两条附件链路：
- * 1) 上传聊天附件；
+ * 1) 上传聊天附件到服务端临时区；
  * 2) 下载指定 attachment_id 或 download_url 对应的文件流。
  *
  * 它只负责 multipart / 二进制传输和统一响应解析，
- * 不把附件自动写入消息模型，也不负责和会话消息做关联。
+ * 不把临时上传自动确认成正式消息，也不负责和会话消息做关联。
  */
 class FileApiClient : public QObject
 {
@@ -43,10 +43,10 @@ class FileApiClient : public QObject
     explicit FileApiClient(QObject *parent = nullptr);
 
     /**
-     * @brief 上传一个本地附件文件。
+     * @brief 上传一个本地附件文件到服务端临时区。
      * @param accessToken 当前登录态 access token。
      * @param localFilePath 本地文件绝对路径。
-     * @param onSuccess 服务端返回成功响应时调用的回调。
+     * @param onSuccess 服务端返回临时 upload key 时调用的回调。
      * @param onFailure 请求失败、网络错误或响应解析失败时调用的回调。
      * @return 本次上传请求的 request_id，可用于关联进度信号与最终结果。
      */

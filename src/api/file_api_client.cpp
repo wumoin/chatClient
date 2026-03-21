@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QHttpMultiPart>
 #include <QHttpPart>
+#include <QImageReader>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QMimeDatabase>
@@ -17,7 +18,7 @@
 #include <QUuid>
 
 // FileApiClient 负责聊天附件的 HTTP 传输细节：
-// - multipart 文件上传
+// - multipart 临时文件上传
 // - 二进制文件下载
 // - JSON 成功/失败响应解析
 //
@@ -77,7 +78,7 @@ QString FileApiClient::uploadAttachment(
         chatclient::config::AppConfig::instance().fileUploadUrl();
 
     CHATCLIENT_LOG_INFO("file.api")
-        << "开始上传聊天附件，request_id="
+        << "开始上传临时聊天附件，request_id="
         << requestId
         << " url="
         << uploadUrl.toString()
@@ -123,6 +124,30 @@ QString FileApiClient::uploadAttachment(
     filePart.setBodyDevice(file);
     file->setParent(multiPart);
     multiPart->append(filePart);
+
+    // 如果当前附件是图片，就顺手把本地解析到的宽高作为可选表单字段带给服务端。
+    // 这样后续 message.send_image 确认正式附件时，服务端就不必再次自行探测尺寸。
+    if (mimeType.isValid() && mimeType.name().startsWith(QStringLiteral("image/")))
+    {
+        QImageReader imageReader(localFilePath);
+        const QSize imageSize = imageReader.size();
+        if (imageSize.isValid())
+        {
+            QHttpPart widthPart;
+            widthPart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                                QVariant(QStringLiteral(
+                                    "form-data; name=\"image_width\"")));
+            widthPart.setBody(QByteArray::number(imageSize.width()));
+            multiPart->append(widthPart);
+
+            QHttpPart heightPart;
+            heightPart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                                 QVariant(QStringLiteral(
+                                     "form-data; name=\"image_height\"")));
+            heightPart.setBody(QByteArray::number(imageSize.height()));
+            multiPart->append(heightPart);
+        }
+    }
 
     QNetworkRequest networkRequest(uploadUrl);
     applyRequestHeaders(&networkRequest, requestId);
@@ -177,12 +202,12 @@ QString FileApiClient::uploadAttachment(
                         }
 
                         CHATCLIENT_LOG_INFO("file.api")
-                            << "聊天附件上传成功，request_id="
+                            << "临时聊天附件上传成功，request_id="
                             << response.requestId
                             << " http_status="
                             << httpStatus
-                            << " attachment_id="
-                            << response.attachment.attachmentId;
+                            << " upload_key="
+                            << response.upload.attachmentUploadKey;
 
                         if (onSuccess)
                         {
@@ -229,7 +254,7 @@ QString FileApiClient::uploadAttachment(
                         }
 
                         CHATCLIENT_LOG_WARN("file.api")
-                            << "聊天附件上传失败，request_id="
+                            << "临时聊天附件上传失败，request_id="
                             << error.requestId
                             << " http_status="
                             << httpStatus
@@ -247,11 +272,11 @@ QString FileApiClient::uploadAttachment(
                         error.message = fallbackMessage;
 
                         CHATCLIENT_LOG_WARN("file.api")
-                            << "聊天附件上传返回了非 JSON 响应，request_id="
+                            << "临时聊天附件上传返回了非 JSON 响应，request_id="
                             << requestId
                             << " http_status="
                             << httpStatus
-                            << " message="
+                            << " error="
                             << error.message;
                         onFailure(error);
                     }
@@ -286,7 +311,7 @@ QString FileApiClient::downloadAttachmentByUrl(
 {
     const QString requestId =
         createRequestId(QStringLiteral("file_download"));
-    // 服务端上传成功响应里的 download_url 当前是相对路径，
+    // 正式附件引用里的 download_url 当前通常是相对路径，
     // 这里统一兼容“相对路径”与“完整绝对 URL”两种输入形式。
     const QUrl resolvedUrl = resolveDownloadUrl(downloadUrl);
 

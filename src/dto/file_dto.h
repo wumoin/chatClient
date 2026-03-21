@@ -22,13 +22,16 @@ struct ApiErrorDto
 };
 
 /**
- * @brief 单个附件摘要 DTO。
+ * @brief 临时附件上传摘要 DTO。
+ *
+ * 这里描述的是“已经上传到服务端临时目录”的文件，
+ * 还不是可供下载接口直接访问的正式 attachment。
  */
-struct AttachmentDto
+struct TemporaryAttachmentUploadDto
 {
-    // 对外稳定附件 ID，例如 att_xxx。
-    QString attachmentId;
-    // 原始文件名，适合界面展示或下载保存时作为默认名。
+    // 临时上传引用，后续 message.send_image 要靠它确认正式附件。
+    QString attachmentUploadKey;
+    // 原始文件名，适合界面展示或日志记录。
     QString fileName;
     // 服务端记录的 MIME 类型。
     QString mimeType;
@@ -36,24 +39,14 @@ struct AttachmentDto
     qint64 sizeBytes = 0;
     // 附件媒体类别，当前只允许 image / file。
     QString mediaKind;
-    // 服务端返回的下载地址，当前通常是相对路径。
-    QString downloadUrl;
-    // true 表示服务端响应里带了 storage_key。
-    bool hasStorageKey = false;
-    // 底层存储 key，当前主要用于调试和排障。
-    QString storageKey;
-    // true 表示当前附件是图片且带了宽度信息。
+    // true 表示当前临时上传带了宽度信息。
     bool hasImageWidth = false;
     // 图片宽度。
     int imageWidth = 0;
-    // true 表示当前附件是图片且带了高度信息。
+    // true 表示当前临时上传带了高度信息。
     bool hasImageHeight = false;
     // 图片高度。
     int imageHeight = 0;
-    // true 表示服务端响应里带了创建时间。
-    bool hasCreatedAtMs = false;
-    // 附件创建时间戳（毫秒）。
-    qint64 createdAtMs = 0;
 };
 
 /**
@@ -63,8 +56,8 @@ struct UploadAttachmentResponseDto
 {
     // 顶层 request_id。
     QString requestId;
-    // 本次上传成功后的附件摘要。
-    AttachmentDto attachment;
+    // 本次上传成功后的临时上传摘要。
+    TemporaryAttachmentUploadDto upload;
 };
 
 /**
@@ -81,15 +74,16 @@ struct DownloadedAttachmentDto
 };
 
 /**
- * @brief 解析单个附件对象。
- * @param object 当前附件 JSON 对象。
+ * @brief 解析单个临时附件上传对象。
+ * @param object 当前临时上传 JSON 对象。
  * @param out 成功时写入解析后的 DTO。
  * @param errorMessage 解析失败时写入原因，可为空。
  * @return true 表示解析成功；false 表示结构不符合当前协议。
  */
-bool parseAttachmentObject(const QJsonObject &object,
-                           AttachmentDto *out,
-                           QString *errorMessage);
+bool parseTemporaryAttachmentUploadObject(
+    const QJsonObject &object,
+    TemporaryAttachmentUploadDto *out,
+    QString *errorMessage);
 
 /**
  * @brief 解析附件上传成功响应。
