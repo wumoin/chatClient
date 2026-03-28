@@ -328,13 +328,13 @@ QWidget *LoginWindow::createLoginPage()
     m_passwordEdit->setEchoMode(QLineEdit::Password);
 
     // 选项区：记住我 / 自动登录。
-    auto *optionsLayout = new QHBoxLayout();
-    optionsLayout->setSpacing(12);
-    m_rememberCheck = new QCheckBox(QStringLiteral("记住我"), card);
-    m_autoLoginCheck = new QCheckBox(QStringLiteral("自动登录"), card);
-    optionsLayout->addWidget(m_rememberCheck);
-    optionsLayout->addWidget(m_autoLoginCheck);
-    optionsLayout->addStretch(1);
+    // auto *optionsLayout = new QHBoxLayout();
+    // optionsLayout->setSpacing(12);
+    // m_rememberCheck = new QCheckBox(QStringLiteral("记住我"), card);
+    // m_autoLoginCheck = new QCheckBox(QStringLiteral("自动登录"), card);
+    // optionsLayout->addWidget(m_rememberCheck);
+    // optionsLayout->addWidget(m_autoLoginCheck);
+    // optionsLayout->addStretch(1);
 
 
     // 主操作按钮：登录。
@@ -360,7 +360,7 @@ QWidget *LoginWindow::createLoginPage()
     // 将表单控件按顺序加入卡片布局。
     cardLayout->addWidget(m_accountEdit);
     cardLayout->addWidget(m_passwordEdit);
-    cardLayout->addLayout(optionsLayout);
+    //cardLayout->addLayout(optionsLayout);
     cardLayout->addWidget(m_loginButton);
     cardLayout->addWidget(m_loginStatusLabel);
     cardLayout->addLayout(helperLayout);

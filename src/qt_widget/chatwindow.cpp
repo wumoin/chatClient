@@ -871,16 +871,16 @@ QWidget *ChatWindow::createMessageContentPage()
     titleLayout->addWidget(m_conversationTitleLabel);
     titleLayout->addWidget(m_conversationMetaLabel);
 
-    m_conversationVoiceButton = new QPushButton(QStringLiteral("语音"), header);
-    m_conversationVoiceButton->setObjectName(
-        QStringLiteral("headerGhostButton"));
-    m_conversationVideoButton = new QPushButton(QStringLiteral("视频"), header);
-    m_conversationVideoButton->setObjectName(
-        QStringLiteral("headerGhostButton"));
+    // m_conversationVoiceButton = new QPushButton(QStringLiteral("语音"), header);
+    // m_conversationVoiceButton->setObjectName(
+    //     QStringLiteral("headerGhostButton"));
+    // m_conversationVideoButton = new QPushButton(QStringLiteral("视频"), header);
+    // m_conversationVideoButton->setObjectName(
+    //     QStringLiteral("headerGhostButton"));
 
     headerLayout->addWidget(titleBlock, 1);
-    headerLayout->addWidget(m_conversationVoiceButton);
-    headerLayout->addWidget(m_conversationVideoButton);
+    // headerLayout->addWidget(m_conversationVoiceButton);
+    // headerLayout->addWidget(m_conversationVideoButton);
 
     m_messageListView = new MessageListView(panel);
     m_messageListView->setObjectName(QStringLiteral("messageListView"));
