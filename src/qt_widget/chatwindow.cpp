@@ -41,7 +41,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidgetAction>
-
+#include <QSplitter>
 #include <optional>
 
 namespace {
@@ -895,6 +895,13 @@ QWidget *ChatWindow::createMessageContentPage()
     composerLayout->setContentsMargins(12, 12, 12, 12);
     composerLayout->setSpacing(10);
 
+
+    QSizePolicy sizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    sizePolicy.setHorizontalStretch(1);
+    sizePolicy.setVerticalStretch(1);
+    composer->setSizePolicy(sizePolicy);
+
+
     m_messageComposerHintLabel = new QLabel(
         QStringLiteral("当前服务地址：%1").arg(config.httpBaseUrlText()),
         composer);
@@ -904,7 +911,7 @@ QWidget *ChatWindow::createMessageContentPage()
     m_messageEditor = new QTextEdit(composer);
     m_messageEditor->setObjectName(QStringLiteral("messageEditor"));
     m_messageEditor->setPlaceholderText(QStringLiteral("输入消息，按 Enter 发送，Shift+Enter 换行"));
-    m_messageEditor->setMinimumHeight(110);
+    m_messageEditor->setMinimumHeight(50);
     m_messageEditor->installEventFilter(this);
 
     auto *actionRow = new QHBoxLayout();
@@ -965,9 +972,26 @@ QWidget *ChatWindow::createMessageContentPage()
     setConversationComposerHintText(
         QStringLiteral("当前服务地址：%1").arg(config.httpBaseUrlText()));
 
+    // panelLayout->addWidget(header);
+    // panelLayout->addWidget(m_messageListView, 1);
+    // panelLayout->addWidget(composer , 1);
+
+    auto *splitter = new QSplitter(Qt::Vertical, panel);
+    splitter->setObjectName(QStringLiteral("contentSplitter"));
+    splitter->setChildrenCollapsible(false);
+
+    splitter->addWidget(m_messageListView);
+    splitter->addWidget(composer);
+
+    // 初始比例：上面消息区大，下面输入区小
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 1);
+
+    // 可以设置初始高度
+    splitter->setSizes({500, 160});
+
     panelLayout->addWidget(header);
-    panelLayout->addWidget(m_messageListView, 1);
-    panelLayout->addWidget(composer);
+    panelLayout->addWidget(splitter, 1);
 
     QTimer::singleShot(0, this, [this]() {
         if (m_messageListView) {
