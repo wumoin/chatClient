@@ -1078,11 +1078,11 @@ QWidget *ChatWindow::createFriendContentPage()
 
     m_startChatButton = new QPushButton(QStringLiteral("发起会话"), panel);
     m_startChatButton->setObjectName(QStringLiteral("panelGhostButton"));
-    auto *viewProfileButton = new QPushButton(QStringLiteral("查看资料"), panel);
-    viewProfileButton->setObjectName(QStringLiteral("panelGhostButton"));
+    //auto *viewProfileButton = new QPushButton(QStringLiteral("查看资料"), panel);
+    //viewProfileButton->setObjectName(QStringLiteral("panelGhostButton"));
 
     actionRow->addWidget(m_startChatButton);
-    actionRow->addWidget(viewProfileButton);
+   // actionRow->addWidget(viewProfileButton);
     actionRow->addStretch(1);
 
     connect(m_startChatButton,
