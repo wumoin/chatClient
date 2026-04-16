@@ -190,7 +190,7 @@ QString localizeAuthError(const chatclient::dto::auth::ApiErrorDto &error)
     // 500 类错误当前统一收敛成通用中文提示，避免把底层英文异常直接暴露给最终用户。
     if (error.errorCode == 50000)
     {
-        return QStringLiteral("服务端处理失败，请稍后重试");
+        return QStringLiteral("该用户已被注册");
     }
 
     return message;

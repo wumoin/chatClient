@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QNetworkProxy>
 #include <QTimer>
 #include <QUuid>
 #include <QWebSocket>
@@ -113,6 +114,10 @@ ChatWsClient::ChatWsClient(QObject *parent)
       m_socket(new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this)),
       m_reconnectTimer(new QTimer(this))
 {
+    // 局域网直连服务端时，显式关闭系统代理，避免 Qt 为 WebSocket
+    // 选择了不支持当前操作的代理类型，导致建连前即失败。
+    m_socket->setProxy(QNetworkProxy::NoProxy);
+
     m_reconnectTimer->setInterval(kReconnectIntervalMs);
     m_reconnectTimer->setSingleShot(true);
     connect(m_reconnectTimer,
